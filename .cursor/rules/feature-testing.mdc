@@ -1,0 +1,13 @@
+---
+description: Exige unitário + e2e e documentação de testes; fonte é skills/AGENTS.md
+alwaysApply: true
+---
+
+Siga [`skills/AGENTS.md`](../../skills/AGENTS.md).
+
+Regras:
+
+1. Sempre que montarmos alguma coisa, essa coisa tem que ter um teste unitario e um e2e.
+2. Sempre documentar quando houver uma atualização em teste (`docs/TESTING.md`).
+
+Scripts e organização: [`docs/TESTING.md`](../../docs/TESTING.md).

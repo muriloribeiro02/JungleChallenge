@@ -1,0 +1,40 @@
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: jungle-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    ports:
+      - "${DATABASE_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: oven/bun:1.4.4
+    working_dir: /app
+    volumes:
+      - .:/app
+    network_mode: "service:postgres"
+    environment:
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_NAME: ${DATABASE_NAME}
+    entrypoint: ["bun", "./src/infrastructure/database/migration-cli.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["migrate"]
+
+volumes:
+  postgres_data:
