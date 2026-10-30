@@ -15,6 +15,16 @@ export interface WagerTransactionRepository {
     providerId: string,
     externalReference: string,
   ): Promise<WagerTransaction | null>;
+  /**
+   * Pendências do mesmo provider + external_reference.
+   * Ordenação determinística: created_at ASC, id ASC.
+   */
+  findPendingByProviderAndExternalReference(
+    providerId: string,
+    externalReference: string,
+  ): Promise<WagerTransaction[]>;
+  /** SELECT FOR UPDATE da linha wager_transaction. */
+  findByIdForUpdate(id: string): Promise<WagerTransaction | null>;
 }
 
 export const WAGER_TRANSACTION_REPOSITORY = Symbol(

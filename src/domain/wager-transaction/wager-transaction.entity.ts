@@ -201,7 +201,7 @@ export class WagerTransaction {
   }
 
   /**
-   * Transição PENDING_REFERENCE → PROCESSED (worker futuro).
+   * Transição PENDING_REFERENCE → PROCESSED (reprocessamento).
    */
   markProcessed(
     resolvedInternalReference: string,
@@ -221,6 +221,33 @@ export class WagerTransaction {
     this._resolvedInternalReference = resolvedInternalReference;
     this._status = WAGER_TRANSACTION_STATUS_PROCESSED;
     this._failureCode = null;
+    this._observedBalance = snap.observedBalance;
+    this._observedWalletVersion = snap.observedWalletVersion;
+    this._updatedAt = at;
+  }
+
+  /**
+   * Transição PENDING_REFERENCE → REJECTED (reprocessamento com regra de negócio).
+   * Não usar para falhas técnicas transitórias.
+   */
+  markRejected(
+    failureCode: WagerFailureCode,
+    snapshot: OperationResultSnapshot,
+    resolvedInternalReference: string | null,
+    at: Date = new Date(),
+  ): void {
+    if (this._status !== WAGER_TRANSACTION_STATUS_PENDING_REFERENCE) {
+      throw new InvalidWagerTransactionError(
+        'somente PENDING_REFERENCE pode ser marcada como REJECTED',
+      );
+    }
+    if (!failureCode) {
+      throw new InvalidWagerTransactionError('failureCode é obrigatório');
+    }
+    const snap = WagerTransaction.assertSnapshot(snapshot, this.amount);
+    this._resolvedInternalReference = resolvedInternalReference;
+    this._status = WAGER_TRANSACTION_STATUS_REJECTED;
+    this._failureCode = failureCode;
     this._observedBalance = snap.observedBalance;
     this._observedWalletVersion = snap.observedWalletVersion;
     this._updatedAt = at;

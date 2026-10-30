@@ -103,6 +103,7 @@ describe('wallet migrations (e2e ida e volta)', () => {
       'AddFailureCodeToWagerTransaction1761690004000',
       'AddResultSnapshotToWagerTransaction1761690005000',
       'RefundRollbackPendingAndUniqueReversal1761690006000',
+      'IndexPendingReferenceLookup1761690007000',
     ]);
     expect(await tableExists('wallet')).toBe(true);
     expect(await tableExists('wager_transaction')).toBe(true);

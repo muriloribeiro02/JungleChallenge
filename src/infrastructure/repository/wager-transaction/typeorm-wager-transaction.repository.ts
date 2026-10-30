@@ -89,6 +89,37 @@ export class TypeOrmWagerTransactionRepository
     }
     return WagerTransactionMapper.toDomain(row);
   }
+
+  async findPendingByProviderAndExternalReference(
+    providerId: string,
+    externalReference: string,
+  ): Promise<WagerTransaction[]> {
+    const rows = await this.transactions
+      .createQueryBuilder('tx')
+      .where('tx.provider_id = :providerId', { providerId })
+      .andWhere('tx.external_reference = :externalReference', {
+        externalReference,
+      })
+      .andWhere('tx.status = :status', { status: 'PENDING_REFERENCE' })
+      .orderBy('tx.created_at', 'ASC')
+      .addOrderBy('tx.id', 'ASC')
+      .getMany();
+
+    return rows.map((row) => WagerTransactionMapper.toDomain(row));
+  }
+
+  async findByIdForUpdate(id: string): Promise<WagerTransaction | null> {
+    const row = await this.transactions
+      .createQueryBuilder('tx')
+      .setLock('pessimistic_write')
+      .where('tx.id = :id', { id })
+      .getOne();
+
+    if (!row) {
+      return null;
+    }
+    return WagerTransactionMapper.toDomain(row);
+  }
 }
 
 function getUniqueViolationIndexName(error: unknown): string | null {

@@ -30,7 +30,9 @@ bun run test:unit -- settle-win
 bun run test:unit -- settle-loss
 bun run test:unit -- refund-wager
 bun run test:unit -- rollback-wager
+bun run test:unit -- reprocess-pending
 bun run test:unit -- refund-rollback.migration
+bun run test:unit -- pending-reference-lookup
 bun run test:unit -- wager-transaction
 bun run test:unit -- wallet-ledger-entry
 bun run test:unit -- outbox-message.migration
@@ -40,6 +42,7 @@ bun run test:e2e -- open-wallet.use-case
 bun run test:e2e -- place-bet.use-case
 bun run test:e2e -- settle-win-loss
 bun run test:e2e -- refund-rollback
+bun run test:e2e -- reprocess-pending
 bun run test:e2e -- wager-transaction.constraints
 bun run test:e2e -- wallet-ledger-entry.constraints
 bun run test:e2e -- outbox-message.constraints
@@ -53,7 +56,7 @@ bun run test:e2e -- wallet.repository
 test/
   helpers/
     db.ts                      # Postgres + insertWallet/tx/ledger/outbox
-    migration-data-source.ts   # DataSource TypeORM com migrations 001–007
+    migration-data-source.ts   # DataSource TypeORM com migrations 001–008
   money/
     money.spec.ts              # unit: precisão e moeda em Money.from
   outbox/
@@ -66,6 +69,7 @@ test/
     wager-transaction-result-snapshot.migration.spec.ts # unit: SQL up/down 006 snapshot
     wager-transaction-result-snapshot.migration.e2e-spec.ts # e2e: 006 colunas, backfill, CHECKs
     refund-rollback.migration.spec.ts     # unit: SQL up/down 007 PENDING_REFERENCE + UNIQUE
+    pending-reference-lookup.migration.spec.ts # unit: SQL up/down 008 índice pending
     wager-transaction.constraints.e2e-spec.ts # e2e: status, amount, idempotência, moeda
   wager/
     place-bet.use-case.spec.ts / .e2e-spec.ts
@@ -75,6 +79,7 @@ test/
     refund-wager.use-case.spec.ts         # unit: REFUND
     rollback-wager.use-case.spec.ts       # unit: ROLLBACK
     refund-rollback.use-case.e2e-spec.ts  # e2e: REFUND/ROLLBACK PG
+    reprocess-pending-references.use-case.spec.ts / .e2e-spec.ts
   wallet-ledger/
     wallet-ledger-entry.entity.spec.ts    # unit: CREDIT/DEBIT, saldos, imutabilidade
     wallet-ledger-entry.migration.spec.ts # unit: SQL up/down ledger
@@ -88,7 +93,7 @@ test/
     wallet.repository.e2e-spec.ts        # e2e: save/findById no Postgres
     wallet.constraints.e2e-spec.ts       # e2e: constraints da tabela wallet
     wallet.migration.spec.ts             # unit: SQL up/down da migration
-    wallet.migration.e2e-spec.ts         # e2e: ida e volta 001–007
+    wallet.migration.e2e-spec.ts         # e2e: ida e volta 001–008
   jest-unit.json
   jest-e2e.json
 ```
@@ -105,6 +110,8 @@ test/
 | `refund-wager.use-case.spec.ts` | unit | REFUND: BET válida, WIN inválida, escopo/amount, PENDING_REFERENCE, duplicata, idempotência |
 | `rollback-wager.use-case.spec.ts` | unit | ROLLBACK: BET/WIN/REFUND, saldo negativo, PENDING_REFERENCE, duplicata, idempotência |
 | `refund-rollback.use-case.e2e-spec.ts` | e2e | REFUND/ROLLBACK PG: saldo, ledger, PENDING_REFERENCE, race duplicada, UNIQUE, atomicidade |
+| `reprocess-pending-references.use-case.spec.ts` | unit | reprocessamento: REFUND/ROLLBACK, rejeição, 2 pendências, defer, outro provider |
+| `reprocess-pending-references.use-case.e2e-spec.ts` | e2e | reprocess PG: saldo/ledger/eventos, corrida, rollback técnico, provider isolation |
 | `wallet.mapper.spec.ts` | unit | `WalletMapper` toPersistence/toDomain e round-trip sem `number` |
 | `get-wallet-balance.use-case.spec.ts` | unit | `GetWalletBalanceUseCase`: encontrada / inexistente (InMemoryWalletRepository) |
 | `open-wallet.use-case.spec.ts` | unit | `OpenWalletUseCase`: zero / positivo / negativo / duplicata / orquestração |
@@ -119,6 +126,7 @@ test/
 | `wager-transaction.migration.spec.ts` | unit | `up`/`down` da `CreateWagerTransactionTable` |
 | `wager-transaction-result-snapshot.migration.spec.ts` | unit | `up`/`down` da 006: colunas nullable, backfill ledger, CHECKs |
 | `refund-rollback.migration.spec.ts` | unit | `up`/`down` da 007: CHK PENDING_REFERENCE + UNIQUE REFUND/ROLLBACK PROCESSED |
+| `pending-reference-lookup.migration.spec.ts` | unit | `up`/`down` da 008: índice parcial PENDING_REFERENCE |
 | `wager-transaction-result-snapshot.migration.e2e-spec.ts` | e2e | 006: ida/volta colunas; backfill `observed_balance`; version NULL; CHECKs |
 | `wallet-ledger-entry.migration.spec.ts` | unit | `up`/`down` da `CreateWalletLedgerEntryTable` |
 | `outbox-message.migration.spec.ts` | unit | `up`/`down` da `CreateOutboxMessageTable` |
@@ -128,13 +136,15 @@ test/
 | `wallet.repository.e2e-spec.ts` | e2e | `TypeOrmWalletRepository.save` / `findById` com Postgres real |
 | `wallet.constraints.e2e-spec.ts` | e2e | CHECK, UNIQUE, PK, NOT NULL |
 | `wallet.migration.spec.ts` | unit | `up`/`down` da `CreateWalletTable` |
-| `wallet.migration.e2e-spec.ts` | e2e | revert em cascata 007→001; run recria 001–007 |
+| `wallet.migration.e2e-spec.ts` | e2e | revert em cascata 008→001; run recria 001–008 |
 
 ```bash
 bun run test:unit -- wager-transaction-result-snapshot.migration
 bun run test:e2e -- wager-transaction-result-snapshot.migration
 bun run test:unit -- refund-rollback.migration
 bun run test:e2e -- refund-rollback
+bun run test:unit -- reprocess-pending
+bun run test:e2e -- reprocess-pending
 ```
 
 

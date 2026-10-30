@@ -82,6 +82,26 @@ class FakeTx implements WagerTransactionRepository {
       ) ?? null
     );
   }
+  async findPendingByProviderAndExternalReference(
+    providerId: string,
+    externalReference: string,
+  ): Promise<WagerTransaction[]> {
+    return this.items
+      .filter(
+        (t) =>
+          t.status === 'PENDING_REFERENCE' &&
+          t.providerId === providerId &&
+          t.externalReference === externalReference,
+      )
+      .sort(
+        (a, b) =>
+          a.createdAt.getTime() - b.createdAt.getTime() ||
+          a.id.localeCompare(b.id),
+      );
+  }
+  async findByIdForUpdate(id: string): Promise<WagerTransaction | null> {
+    return this.items.find((t) => t.id === id) ?? null;
+  }
 }
 
 class FakeLedger implements WalletLedgerEntryRepository {

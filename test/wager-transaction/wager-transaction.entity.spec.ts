@@ -424,5 +424,18 @@ describe('WagerTransaction', () => {
       expect(tx.status).toBe(WAGER_TRANSACTION_STATUS_REJECTED);
       expect(tx.failureCode).toBe(FAILURE_CODE_INVALID_REFERENCE_TYPE);
     });
+
+    it('markRejected promove PENDING_REFERENCE com failureCode', () => {
+      const tx = WagerTransaction.refundPendingReference(externalBase());
+      tx.markRejected(
+        FAILURE_CODE_INVALID_REFERENCE_TYPE,
+        validSnapshot(),
+        null,
+      );
+
+      expect(tx.status).toBe(WAGER_TRANSACTION_STATUS_REJECTED);
+      expect(tx.failureCode).toBe(FAILURE_CODE_INVALID_REFERENCE_TYPE);
+      expect(tx.observedWalletVersion).toBe(1);
+    });
   });
 });
