@@ -110,7 +110,7 @@ Detalhe: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 | `GET` | `/wagering/transactions/:transactionId` | |
 | `GET` | `/providers/:providerId/wagering/transactions/:externalTransactionId` | |
 | `GET` | `/health/live` | liveness |
-| `GET` | `/health/ready` | PG `SELECT 1` + `receive(1,0)` na fila **events** (não read-only; inbound fora do probe; 503 se down / stopping) |
+| `GET` | `/health/ready` | PG `SELECT 1` + `checkAvailable`/`GetQueueAttributes` na fila **events** (sem consumo; inbound fora do probe; 503 se down / stopping) |
 | `GET` | `/metrics` | Prometheus text |
 
 Money sempre como **string** (`"25.00"`), nunca `number`.

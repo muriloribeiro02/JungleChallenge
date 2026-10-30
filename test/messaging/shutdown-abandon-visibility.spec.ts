@@ -39,6 +39,7 @@ class MemoryBus implements MessageBus {
   async changeVisibility(receiptHandle: string, seconds: number): Promise<void> {
     this.visibility.push({ receiptHandle, seconds });
   }
+  async checkAvailable(): Promise<void> {}
 }
 
 describe('Shutdown abandon + ChangeMessageVisibility(0)', () => {

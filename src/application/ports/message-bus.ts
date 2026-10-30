@@ -26,6 +26,12 @@ export interface MessageBus {
   ack(receiptHandle: string): Promise<void>;
   /** Opcional: estender visibility (não usado se DLQ cobrir retries). */
   changeVisibility?(receiptHandle: string, seconds: number): Promise<void>;
+  /**
+   * Readiness: fila configurada acessível.
+   * Não recebe mensagens, não altera visibility, não faz ACK nem publish.
+   * Resolve se OK; rejeita se a fila estiver indisponível/inacessível.
+   */
+  checkAvailable(): Promise<void>;
 }
 
 export const MESSAGE_BUS = Symbol('MESSAGE_BUS');

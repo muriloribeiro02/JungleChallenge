@@ -107,6 +107,7 @@ describe('OutboxPublisher intervention (unit)', () => {
       },
       receive: async (): Promise<ReceivedBusMessage[]> => [],
       ack: async () => undefined,
+      checkAvailable: async () => undefined,
     };
 
     const repos = {
@@ -165,6 +166,7 @@ describe('OutboxPublisher intervention (unit)', () => {
       },
       receive: async () => [],
       ack: async () => undefined,
+      checkAvailable: async () => undefined,
     };
     // claimUnpublished exclui intervention — batch vazio
     const result2 = await new OutboxPublisher(

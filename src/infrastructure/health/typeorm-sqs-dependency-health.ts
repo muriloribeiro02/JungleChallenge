@@ -6,8 +6,8 @@ import type {
 import type { MessageBus } from '../../application/ports/message-bus';
 
 /**
- * Adapter: Postgres via DataSource; SQS via MessageBus já composto
- * (sem criar cliente novo a cada check).
+ * Adapter: Postgres via DataSource; SQS via MessageBus.checkAvailable
+ * (GetQueueAttributes — sem ReceiveMessage / side effects de visibility).
  */
 export class TypeOrmSqsDependencyHealth implements DependencyHealthPort {
   constructor(
@@ -27,7 +27,7 @@ export class TypeOrmSqsDependencyHealth implements DependencyHealthPort {
     }
 
     try {
-      await this.messageBus.receive(1, 0);
+      await this.messageBus.checkAvailable();
       sqs = true;
     } catch {
       sqs = false;

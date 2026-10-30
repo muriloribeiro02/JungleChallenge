@@ -92,6 +92,7 @@ describe('Instrumentação de métricas (unit)', () => {
         return this.queue.splice(0, max);
       }
       async ack(): Promise<void> {}
+      async checkAvailable(): Promise<void> {}
     }
 
     class Uow implements UnitOfWork {
@@ -185,6 +186,7 @@ describe('Instrumentação de métricas (unit)', () => {
         return [];
       }
       async ack(): Promise<void> {}
+      async checkAvailable(): Promise<void> {}
     }
 
     let claimed = false;

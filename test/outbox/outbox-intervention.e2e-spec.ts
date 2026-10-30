@@ -18,6 +18,7 @@ function failingBus(): MessageBus {
     },
     receive: async () => [],
     ack: async () => undefined,
+    checkAvailable: async () => undefined,
   };
 }
 
@@ -26,6 +27,7 @@ function okBus(): MessageBus {
     publish: async () => undefined,
     receive: async () => [],
     ack: async () => undefined,
+    checkAvailable: async () => undefined,
   };
 }
 

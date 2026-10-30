@@ -281,7 +281,7 @@ curl -s -i http://localhost:3001/health/ready
 O adapter `TypeOrmSqsDependencyHealth` (`/health/ready`):
 
 1. Consulta PostgreSQL (`SELECT 1`).
-2. Executa `messageBus.receive(1, 0)` na fila **events** — **não** é verificação SQS passiva/read-only; pode afetar a visibilidade de uma mensagem (mesmo brevemente).
+2. Executa `messageBus.checkAvailable()` → `GetQueueAttributes` (`QueueArn`) na fila **events** — sem `ReceiveMessage` / sem alterar visibility.
 3. A fila **inbound FIFO** **não** é verificada por esse probe.
 
 Checagens de infra (`DATABASE_USER` / `DATABASE_NAME` do `.env`; defaults do `.env.example`: `jungle` / `jungle_db`):
@@ -300,7 +300,7 @@ Com postgres + localstack healthy e app iniciado: ready **200**.
 
 - Durante `apps:down` / SIGTERM, ready pode ir a 503 de propósito.
 - Live **não** prova que a fila está consumindo.
-- Mensagens `NotVisible` na events queue podem ser efeito colateral do probe de ready (além de workers). Prefira `get-queue-attributes`, não `receive-message`, para diagnóstico.
+- Prefira `get-queue-attributes`, não `receive-message`, para diagnóstico de profundidade da fila.
 
 ---
 

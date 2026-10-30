@@ -39,6 +39,8 @@ class MemoryBus implements MessageBus {
     this.visibility.push({ receiptHandle, seconds });
   }
 
+  async checkAvailable(): Promise<void> {}
+
   enqueue(envelope: DomainEventEnvelope, receiveCount = 1): void {
     this.queue.push({
       id: envelope.eventId,

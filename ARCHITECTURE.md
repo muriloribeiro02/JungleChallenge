@@ -517,9 +517,9 @@ Mapeamento HTTP (contrato exige distinção clara, não códigos fixos):
 Adapter `TypeOrmSqsDependencyHealth`:
 
 1. PostgreSQL: `SELECT 1` via TypeORM `DataSource`.
-2. SQS: `messageBus.receive(1, 0)` na fila **events** (bus principal / `SQS_MAIN_QUEUE_URL`).
+2. SQS: `messageBus.checkAvailable()` → `GetQueueAttributes` (`QueueArn`) na fila **events** (bus principal / `SQS_MAIN_QUEUE_URL`).
 
-Essa verificação **não** é consulta passiva / read-only: um `ReceiveMessage` pode afetar a **visibilidade** de uma mensagem (mesmo brevemente, conforme visibility timeout do receive). A fila **inbound FIFO** **não** é verificada por este probe.
+Sem `ReceiveMessage`: não consome mensagens, não altera visibility, não faz ACK nem publish. A fila **inbound FIFO** **não** é verificada por este probe.
 
 Reconciliação: compara saldo materializado × Σ ledger; **não** corrige; log + métrica + resposta §9.
 
@@ -609,7 +609,7 @@ Se duas reversões correm em paralelo e a constraint UNIQUE dispara:
 - Status `FAILED` / `PENDING` no CHECK **sem** ciclo de vida no domínio.
 - Intervenção Outbox é operacional via CLI, **sem** endpoint HTTP admin.
 - Race UNIQUE REFUND/ROLLBACK: Submit HTTP pode responder **409** sem `REJECTED`; use case direto de Refund/Rollback pode persistir `REJECTED` — semânticas distintas (§18).
-- `/health/ready` não é probe SQS read-only: usa `receive(1, 0)` na fila events; inbound FIFO fora do probe (§15).
+- `/health/ready` usa `checkAvailable` / `GetQueueAttributes` (sem consumo); inbound FIFO fora do probe (§15).
 
 ---
 

@@ -98,9 +98,10 @@ test/
     http-exception.filter.spec.ts         # unit: mapHttpError 404/409/400/500
     money.dto.spec.ts                     # unit: MoneyDto escala + magnitude shared
     health.controller.spec.ts             # unit: live/ready via DependencyHealthPort
-    health.e2e-spec.ts                    # e2e: ready 200/503; live stopping (spies no adapter)
+    health.e2e-spec.ts                    # e2e: ready 200/503 via checkAvailable; sem receive; mensagem permanece visível; live stopping
   infrastructure/
-    typeorm-sqs-dependency-health.spec.ts # unit: adapter PG/SQS isolado
+    typeorm-sqs-dependency-health.spec.ts # unit: PG/SQS via checkAvailable; nunca chama receive
+    sqs-message-bus.check-available.spec.ts # unit: GetQueueAttributes QueueArn ok/falha
   shared/
     money-limits.spec.ts                  # unit: isMoneyAmountWithinMaxAbs
   messaging/
@@ -171,8 +172,9 @@ test/
 | `api/money.dto.spec.ts` | unit | MoneyDto: limite, escala, formatos inválidos |
 | `shared/money-limits.spec.ts` | unit | magnitude NUMERIC(19,2) compartilhada |
 | `api/health.controller.spec.ts` | unit | live/ready via porta (sem TypeORM/SQS) |
-| `infrastructure/typeorm-sqs-dependency-health.spec.ts` | unit | adapter check PG/SQS; reusa MessageBus |
-| `api/health.e2e-spec.ts` | e2e | ready 200/503; live stopping (spies DataSource/MessageBus) |
+| `infrastructure/typeorm-sqs-dependency-health.spec.ts` | unit | adapter: `checkAvailable` (não `receive`); PG/SQS fail |
+| `infrastructure/sqs-message-bus.check-available.spec.ts` | unit | `GetQueueAttributes` QueueArn; rejeita sem ARN / SDK error |
+| `api/health.e2e-spec.ts` | e2e | ready 200/503; spy sem `receive`; NotVisible estável após probes; live stopping |
 | `api/http.api.e2e-spec.ts` | e2e | REST §9; 202 PENDING_REFERENCE; 404; 409; magnitude 400 |
 | `money/money.spec.ts` | unit | `from`/`fromPersisted`; magnitude em add/subtract/negate (MAX±); moeda; negativos internos |
 | `money/align-monetary-scale.migration.spec.ts` | unit | SQL up/down `AlignMonetaryNumericScaleNineteenTwo` + abort se dados com >2 casas |

@@ -1,6 +1,7 @@
 import {
   ChangeMessageVisibilityCommand,
   DeleteMessageCommand,
+  GetQueueAttributesCommand,
   ReceiveMessageCommand,
   SendMessageCommand,
   SQSClient,
@@ -30,6 +31,25 @@ export class SqsMessageBus implements MessageBus {
       }),
       queueUrl,
     );
+  }
+
+  /**
+   * Probe de disponibilidade sem consumo (GetQueueAttributes / QueueArn).
+   * Erros do SDK propagam para o caller (health → sqs=false).
+   */
+  async checkAvailable(): Promise<void> {
+    const result = await this.client.send(
+      new GetQueueAttributesCommand({
+        QueueUrl: this.queueUrl,
+        AttributeNames: ['QueueArn'],
+      }),
+    );
+    const arn = result.Attributes?.QueueArn;
+    if (arn === undefined || arn.trim() === '') {
+      throw new Error(
+        `SQS checkAvailable: QueueArn ausente para ${this.queueUrl}`,
+      );
+    }
   }
 
   async publish(message: BusMessage): Promise<void> {

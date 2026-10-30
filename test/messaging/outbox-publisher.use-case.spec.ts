@@ -24,6 +24,8 @@ class FakeBus implements MessageBus {
   }
 
   async ack(): Promise<void> {}
+
+  async checkAvailable(): Promise<void> {}
 }
 
 describe('OutboxPublisher helpers (unit)', () => {
