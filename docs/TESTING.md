@@ -135,7 +135,7 @@ test/
     wager-transaction.mapper.spec.ts      # unit: ORM ↔ domínio + snapshot
     wager-transaction.migration.spec.ts   # unit: SQL up/down wager_transaction
     wager-transaction-result-snapshot.migration.spec.ts # unit: SQL up/down 006 snapshot
-    wager-transaction-result-snapshot.migration.e2e-spec.ts # e2e: 006 colunas, backfill, CHECKs
+    wager-transaction-result-snapshot.migration.e2e-spec.ts # e2e: 006 ida/volta (120s); backfill; afterEach head
     refund-rollback.migration.spec.ts     # unit: SQL up/down 007 PENDING_REFERENCE + UNIQUE
     unique-any-processed-reversal.migration.spec.ts # unit: SQL up/down 011 UNIQUE cross-kind
     pending-reference-lookup.migration.spec.ts # unit: SQL up/down 008 índice pending
@@ -221,7 +221,7 @@ test/
 | `wager-transaction-result-snapshot.migration.spec.ts` | unit | `up`/`down` da 006: colunas nullable, backfill ledger, CHECKs |
 | `refund-rollback.migration.spec.ts` | unit | `up`/`down` da 007: CHK PENDING_REFERENCE + UNIQUE REFUND/ROLLBACK PROCESSED |
 | `pending-reference-lookup.migration.spec.ts` | unit | `up`/`down` da 008: índice parcial PENDING_REFERENCE |
-| `wager-transaction-result-snapshot.migration.e2e-spec.ts` | e2e | 006: ida/volta colunas; backfill `observed_balance`; version NULL; CHECKs |
+| `wager-transaction-result-snapshot.migration.e2e-spec.ts` | e2e | 006: ida/volta (timeout 120s); backfill; CHECKs; `afterEach` reaplica head |
 | `wallet-ledger-entry.migration.spec.ts` | unit | `up`/`down` da `CreateWalletLedgerEntryTable` |
 | `wallet-ledger-entry.mapper.spec.ts` | unit | rejeita precisão inválida na reidratação (`fromPersisted`) |
 | `outbox-message.migration.spec.ts` | unit | `up`/`down` da `CreateOutboxMessageTable` |

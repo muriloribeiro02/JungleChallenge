@@ -19,6 +19,9 @@ import { AlignMonetaryNumericScaleNineteenTwo1793385791150 } from '../../src/inf
 import { OutboxInterventionFields1793389000000 } from '../../src/infrastructure/database/migrations/1793389000000-OutboxInterventionFields';
 
 describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
+  /** Undo 015→006 + reapply: além do default Jest 5s. */
+  jest.setTimeout(120_000);
+
   let dataSource: DataSource;
   const migrationName = new AddResultSnapshotToWagerTransaction1761690005000()
     .name;
@@ -74,14 +77,21 @@ describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
     dataSource = createMigrationDataSource();
     await dataSource.initialize();
     await dataSource.runMigrations();
-  });
+  }, 120_000);
+
+  /** Evita schema/`migrations` a meio caminho após timeout ou falha parcial. */
+  afterEach(async () => {
+    if (dataSource?.isInitialized) {
+      await dataSource.runMigrations();
+    }
+  }, 120_000);
 
   afterAll(async () => {
     if (dataSource?.isInitialized) {
       await dataSource.runMigrations();
       await dataSource.destroy();
     }
-  });
+  }, 120_000);
 
   async function undoUntilSnapshotRemoved(): Promise<void> {
     while (await columnExists('observed_balance')) {
