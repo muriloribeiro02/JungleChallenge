@@ -74,14 +74,13 @@ class FakeTx implements WagerTransactionRepository {
     );
   }
   async findProcessedReversalByProviderAndExternalReference(
-    kind: 'REFUND' | 'ROLLBACK',
     providerId: string,
     externalReference: string,
   ): Promise<WagerTransaction | null> {
     return (
       this.items.find(
         (t) =>
-          t.kind === kind &&
+          (t.kind === 'REFUND' || t.kind === 'ROLLBACK') &&
           t.status === 'PROCESSED' &&
           t.providerId === providerId &&
           t.externalReference === externalReference,
@@ -117,6 +116,17 @@ class FakeLedger implements WalletLedgerEntryRepository {
   items: WalletLedgerEntry[] = [];
   async save(entry: WalletLedgerEntry): Promise<void> {
     this.items.push(entry);
+  }
+
+  async listByWalletId(walletId: string, options: { cursor?: string | null; limit: number }) {
+    const items = this.items.filter((e) => e.walletId === walletId).slice(0, options.limit);
+    return { items, nextCursor: null };
+  }
+  async listAllByWalletId(walletId: string) {
+    return this.items.filter((e) => e.walletId === walletId);
+  }
+  async countByWalletId(walletId: string) {
+    return this.items.filter((e) => e.walletId === walletId).length;
   }
 }
 
@@ -347,6 +357,40 @@ describe('RefundWagerUseCase', () => {
 
     expect(second.status).toBe('REJECTED');
     expect(second.failureCode).toBe(FAILURE_CODE_REFERENCE_ALREADY_REVERSED);
+  });
+
+  it('rejeita REFUND quando já existe ROLLBACK PROCESSED da mesma BET', async () => {
+    const { wallet, txs, ledger, useCase, wallets } = setup('50.00');
+    const bet = seedBet(txs, wallet);
+    txs.items.push(
+      WagerTransaction.rollbackProcessed({
+        id: randomUUID(),
+        walletId: wallet.id,
+        playerId: wallet.playerId,
+        amount: Money.from({ amount: '20.00', currency: 'BRL' }),
+        providerId,
+        externalTransactionId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        payloadHash: 'hash-rb',
+        roundId: 'round-1',
+        gameId: 'game-1',
+        externalReference: bet.externalTransactionId!,
+        resolvedInternalReference: bet.id,
+        snapshot: {
+          observedBalance: Money.from({ amount: '70.00', currency: 'BRL' }),
+          observedWalletVersion: 3,
+        },
+      }),
+    );
+
+    const result = await useCase.execute(
+      input(wallet, bet.externalTransactionId!),
+    );
+
+    expect(result.status).toBe('REJECTED');
+    expect(result.failureCode).toBe(FAILURE_CODE_REFERENCE_ALREADY_REVERSED);
+    expect(wallets.wallet?.balance.toString()).toBe('50.00');
+    expect(ledger.items).toHaveLength(0);
   });
 
   it('persiste PENDING_REFERENCE sem alterar saldo nem ledger', async () => {

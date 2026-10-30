@@ -21,3 +21,4 @@ O que é o rehydrat? É um metodo utilizado para reconstruir a carteira a partir
 4 - Apliquei a ORM TypeORM, como intermediador das consultas. Eu vejo as ORMs como um intermediador, ele permite mapear as entidades e ajuda a executar consultas, sem necessariamente escrever SQL manualmente. (A escolha do typeORM: Me familiarizei melhor, não conheço ainda o MikroORM, porém ja estou estudando, e em breve estarei apto para atuar com esta ORM).
 
 5 - Wallet-Ledger: É o historico financeiro que deve ser preservado, nele nós conseguimos ver o valor creditado, debitado, saldo antes e depois da movimentação 
+

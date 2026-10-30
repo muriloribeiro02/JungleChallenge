@@ -10,8 +10,11 @@ export interface WagerTransactionRepository {
     providerId: string,
     externalTransactionId: string,
   ): Promise<WagerTransaction | null>;
+  /**
+   * Qualquer REFUND ou ROLLBACK PROCESSED apontando para a mesma referência
+   * externa (unicidade financeira cross-kind — ver migration 011).
+   */
   findProcessedReversalByProviderAndExternalReference(
-    kind: 'REFUND' | 'ROLLBACK',
     providerId: string,
     externalReference: string,
   ): Promise<WagerTransaction | null>;

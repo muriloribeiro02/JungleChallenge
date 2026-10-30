@@ -76,14 +76,13 @@ class FakeTx implements WagerTransactionRepository {
   }
 
   async findProcessedReversalByProviderAndExternalReference(
-    kind: 'REFUND' | 'ROLLBACK',
     providerId: string,
     externalReference: string,
   ): Promise<WagerTransaction | null> {
     return (
       this.items.find(
         (t) =>
-          t.kind === kind &&
+          (t.kind === 'REFUND' || t.kind === 'ROLLBACK') &&
           t.status === 'PROCESSED' &&
           t.providerId === providerId &&
           t.externalReference === externalReference,
@@ -121,6 +120,17 @@ class FakeLedger implements WalletLedgerEntryRepository {
   items: WalletLedgerEntry[] = [];
   async save(entry: WalletLedgerEntry): Promise<void> {
     this.items.push(entry);
+  }
+
+  async listByWalletId(walletId: string, options: { cursor?: string | null; limit: number }) {
+    const items = this.items.filter((e) => e.walletId === walletId).slice(0, options.limit);
+    return { items, nextCursor: null };
+  }
+  async listAllByWalletId(walletId: string) {
+    return this.items.filter((e) => e.walletId === walletId);
+  }
+  async countByWalletId(walletId: string) {
+    return this.items.filter((e) => e.walletId === walletId).length;
   }
 }
 
@@ -412,6 +422,71 @@ describe('ReprocessPendingReferencesUseCase', () => {
     expect(result.results[0].status).toBe('PENDING_REFERENCE');
     expect(wallets.wallet?.balance.toString()).toBe('80.00');
     expect(ledger.items).toHaveLength(0);
+  });
+
+  it('pendência ROLLBACK rejeitada se REFUND da mesma BET já foi processado', async () => {
+    const { wallet, txs, ledger, wallets, useCase } = setup('100.00');
+    const bet = seedBet(txs, wallet);
+    const pendingRb = seedPendingRollback(
+      txs,
+      wallet,
+      bet.externalTransactionId!,
+    );
+    txs.items.push(
+      WagerTransaction.refundProcessed({
+        id: randomUUID(),
+        walletId: wallet.id,
+        playerId: wallet.playerId,
+        amount: Money.from({ amount: '20.00', currency: 'BRL' }),
+        providerId,
+        externalTransactionId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        payloadHash: 'hash-rf',
+        roundId: 'round-1',
+        gameId: 'game-1',
+        externalReference: bet.externalTransactionId!,
+        resolvedInternalReference: bet.id,
+        snapshot: {
+          observedBalance: Money.from({ amount: '100.00', currency: 'BRL' }),
+          observedWalletVersion: 3,
+        },
+      }),
+    );
+
+    const result = await useCase.execute({
+      providerId,
+      externalReference: bet.externalTransactionId!,
+    });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].status).toBe('REJECTED');
+    expect(result.results[0].failureCode).toBe(
+      FAILURE_CODE_REFERENCE_ALREADY_REVERSED,
+    );
+    expect(pendingRb.status).toBe('REJECTED');
+    expect(wallets.wallet?.balance.toString()).toBe('100.00');
+    expect(ledger.items).toHaveLength(0);
+  });
+
+  it('duas pendências REFUND+ROLLBACK da mesma BET: só uma PROCESSED', async () => {
+    const { wallet, txs, ledger, wallets, useCase } = setup('80.00');
+    const bet = seedBet(txs, wallet);
+    seedPendingRefund(txs, wallet, bet.externalTransactionId!);
+    seedPendingRollback(txs, wallet, bet.externalTransactionId!);
+
+    const result = await useCase.execute({
+      providerId,
+      externalReference: bet.externalTransactionId!,
+    });
+
+    const statuses = result.results.map((r) => r.status).sort();
+    expect(statuses).toEqual(['PROCESSED', 'REJECTED']);
+    expect(
+      result.results.find((r) => r.status === 'REJECTED')?.failureCode,
+    ).toBe(FAILURE_CODE_REFERENCE_ALREADY_REVERSED);
+    expect(wallets.wallet?.balance.toString()).toBe('100.00');
+    expect(ledger.items).toHaveLength(1);
+    expect(ledger.items[0].direction).toBe('CREDIT');
   });
 
   it('não processa pendências de outro provider', async () => {

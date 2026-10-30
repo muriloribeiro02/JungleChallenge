@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.cursor
+coverage
+*.md
+!README.md
+.env
+agent-transcripts
+terminals
+**/*.spec.ts
+**/*.e2e-spec.ts
+test

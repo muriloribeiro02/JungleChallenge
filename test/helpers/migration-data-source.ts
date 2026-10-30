@@ -9,6 +9,7 @@ import { RefundRollbackPendingAndUniqueReversal1761690006000 } from '../../src/i
 import { IndexPendingReferenceLookup1761690007000 } from '../../src/infrastructure/database/migrations/008-Index_pending_reference_lookup';
 import { OutboxClaimLockedUntil1761690008000 } from '../../src/infrastructure/database/migrations/009-Outbox_claim_locked_until';
 import { CreateInboxMessageTable1761690009000 } from '../../src/infrastructure/database/migrations/010-Create_table_inbox_message';
+import { UniqueAnyProcessedReversalPerReference1761690010000 } from '../../src/infrastructure/database/migrations/011-Unique_any_processed_reversal_per_reference';
 import { databaseEnv } from '../../src/infrastructure/database/env';
 
 export const ALL_MIGRATIONS = [
@@ -22,6 +23,7 @@ export const ALL_MIGRATIONS = [
   IndexPendingReferenceLookup1761690007000,
   OutboxClaimLockedUntil1761690008000,
   CreateInboxMessageTable1761690009000,
+  UniqueAnyProcessedReversalPerReference1761690010000,
 ] as const;
 
 export function createMigrationDataSource(): DataSource {

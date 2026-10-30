@@ -198,7 +198,6 @@ export class RefundWagerUseCase {
 
     const existingRefund =
       await repos.wagerTransactions.findProcessedReversalByProviderAndExternalReference(
-        'REFUND',
         input.providerId,
         input.referenceExternalTransactionId,
       );

@@ -11,7 +11,8 @@
  * - INVALID_REFERENCE_TYPE — kind da referência não permitido para a operação.
  * - REFERENCE_SCOPE_MISMATCH — provider/player/wallet/currency/round divergem.
  * - REFERENCE_AMOUNT_MISMATCH — amount ≠ amount da referência.
- * - REFERENCE_ALREADY_REVERSED — já existe reversão PROCESSED do mesmo tipo.
+ * - REFERENCE_ALREADY_REVERSED — já existe reversão PROCESSED (REFUND ou
+ *   ROLLBACK) da mesma referência externa; impede crédito/débito duplicado.
  * - REFERENCE_NOT_PROCESSED — referência existe mas não está PROCESSED.
  * - REVERSAL_WOULD_CAUSE_NEGATIVE_BALANCE — ROLLBACK débito deixaria saldo < 0.
  */

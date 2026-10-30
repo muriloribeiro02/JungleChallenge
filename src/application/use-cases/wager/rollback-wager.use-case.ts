@@ -206,7 +206,6 @@ export class RollbackWagerUseCase {
 
     const existingRollback =
       await repos.wagerTransactions.findProcessedReversalByProviderAndExternalReference(
-        'ROLLBACK',
         input.providerId,
         input.referenceExternalTransactionId,
       );

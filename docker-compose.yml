@@ -1,4 +1,28 @@
 
+x-app-env: &app_env
+  NODE_ENV: production
+  PORT: "3000"
+  WORKERS_ENABLED: "true"
+  WORKER_OUTBOX_INTERVAL_MS: "400"
+  WORKER_INBOX_INTERVAL_MS: "400"
+  OUTBOX_CLAIM_LEASE_SECONDS: ${OUTBOX_CLAIM_LEASE_SECONDS:-60}
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_USER: ${DATABASE_USER}
+  DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+  DATABASE_NAME: ${DATABASE_NAME}
+  AWS_REGION: ${AWS_REGION:-us-east-1}
+  AWS_ENDPOINT_URL: http://localstack:4566
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  SQS_MAIN_QUEUE_URL: http://localstack:4566/000000000000/jungle-wager-events
+  SQS_DLQ_URL: http://localstack:4566/000000000000/jungle-wager-events-dlq
+  SQS_VISIBILITY_TIMEOUT_SECONDS: ${SQS_VISIBILITY_TIMEOUT_SECONDS:-30}
+  SQS_MAX_RECEIVE_COUNT: ${SQS_MAX_RECEIVE_COUNT:-5}
+  SQS_RECEIVE_WAIT_SECONDS: "1"
+  SQS_RECEIVE_MAX_MESSAGES: "10"
+  OUTBOX_PUBLISHER_BATCH_SIZE: "10"
+
 services:
   postgres:
     image: postgres:16
@@ -54,6 +78,40 @@ services:
       postgres:
         condition: service_healthy
     profiles: ["migrate"]
+
+  # Fase B — três processos independentes (mesma imagem, mesmo PG e SQS)
+  app-1: &app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jungle-wagering-app:local
+    restart: unless-stopped
+    environment:
+      <<: *app_env
+      INSTANCE_ID: app-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+
+  app-2:
+    <<: *app
+    ports:
+      - "3002:3000"
+    environment:
+      <<: *app_env
+      INSTANCE_ID: app-2
+
+  app-3:
+    <<: *app
+    ports:
+      - "3003:3000"
+    environment:
+      <<: *app_env
+      INSTANCE_ID: app-3
 
 volumes:
   postgres_data:

@@ -484,7 +484,7 @@ describe('Refund / Rollback (e2e postgres)', () => {
       ),
     ).rejects.toMatchObject({
       code: '23505',
-      constraint: 'UQ_wager_transaction_refund_processed_ref',
+      constraint: 'UQ_wager_transaction_processed_reversal_ref',
     });
   });
 });

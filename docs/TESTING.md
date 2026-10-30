@@ -15,6 +15,9 @@ Sempre documentar quando houver uma atualização em teste neste arquivo.
 | `test:e2e` | `bun run test:e2e` | Roda testes **e2e** em `test/**/*.e2e-spec.ts` (pode usar Postgres) |
 | `test:all` | `bun run test:all` | Roda unitários e e2e em sequência |
 | `test:messaging` | `bun run test:messaging` | E2E mensageria: Postgres + LocalStack SQS (`messaging.sqs`) |
+| `test:multi-instance` | `bun run test:multi-instance` | 3 containers `app-1..3` (HTTP + workers reais) |
+| `apps:up` / `apps:down` | `bun run apps:up` | Sobe/para app-1..3 |
+| (filtro) | `bun run test:e2e -- http.api` | E2E HTTP Nest + Postgres (supertest) |
 | `test:watch` | `bun run test:watch` | Jest em modo watch (specs em `src/`) |
 | `test:cov` | `bun run test:cov` | Cobertura dos specs em `src/` |
 | `test:debug` | `bun run test:debug` | Jest com inspector Node para debug |
@@ -59,12 +62,18 @@ test/
   helpers/
     db.ts                      # Postgres + insertWallet/tx/ledger/outbox
     migration-data-source.ts   # DataSource TypeORM com migrations 001–010
+  api/
+    http.api.e2e-spec.ts                  # e2e: REST §9 (wallets, wagering, health, idempotência)
   messaging/
     outbox-publisher.use-case.spec.ts     # unit: backoff / markPublished (ports)
     inbox-consumer.use-case.spec.ts       # unit: inbox, duplicata, fail sem ACK + visibility=0
     messaging.migration.spec.ts           # unit: SQL 009/010
     messaging.sqs.e2e-spec.ts             # e2e: PG + LocalStack SQS (publish/claim/DLQ/inbox)
                                           # wiring via UnitOfWork + composition helpers
+  wallet/
+    reconcile-wallet.use-case.spec.ts     # unit: reconciliação saldo×ledger
+  wager/
+    submit-wager-transaction.use-case.spec.ts # unit: fachada HTTP→use cases
   money/
     money.spec.ts              # unit: precisão e moeda em Money.from
   outbox/
@@ -77,6 +86,7 @@ test/
     wager-transaction-result-snapshot.migration.spec.ts # unit: SQL up/down 006 snapshot
     wager-transaction-result-snapshot.migration.e2e-spec.ts # e2e: 006 colunas, backfill, CHECKs
     refund-rollback.migration.spec.ts     # unit: SQL up/down 007 PENDING_REFERENCE + UNIQUE
+    unique-any-processed-reversal.migration.spec.ts # unit: SQL up/down 011 UNIQUE cross-kind
     pending-reference-lookup.migration.spec.ts # unit: SQL up/down 008 índice pending
     wager-transaction.constraints.e2e-spec.ts # e2e: status, amount, idempotência, moeda
   wager/
@@ -84,9 +94,10 @@ test/
     settle-win.use-case.spec.ts
     settle-loss.use-case.spec.ts
     settle-win-loss.use-case.e2e-spec.ts  # e2e: WIN/LOSS PG
-    refund-wager.use-case.spec.ts         # unit: REFUND
-    rollback-wager.use-case.spec.ts       # unit: ROLLBACK
+    refund-wager.use-case.spec.ts         # unit: REFUND (+ cross-kind vs ROLLBACK)
+    rollback-wager.use-case.spec.ts       # unit: ROLLBACK (+ cross-kind vs REFUND)
     refund-rollback.use-case.e2e-spec.ts  # e2e: REFUND/ROLLBACK PG
+    refund-rollback-cross-kind.use-case.e2e-spec.ts # e2e: H1 REFUND×ROLLBACK PG
     reprocess-pending-references.use-case.spec.ts / .e2e-spec.ts
   wallet-ledger/
     wallet-ledger-entry.entity.spec.ts    # unit: CREDIT/DEBIT, saldos, imutabilidade
@@ -101,7 +112,7 @@ test/
     wallet.repository.e2e-spec.ts        # e2e: save/findById no Postgres
     wallet.constraints.e2e-spec.ts       # e2e: constraints da tabela wallet
     wallet.migration.spec.ts             # unit: SQL up/down da migration
-    wallet.migration.e2e-spec.ts         # e2e: ida e volta 001–008
+    wallet.migration.e2e-spec.ts         # e2e: ida e volta 001–011
   jest-unit.json
   jest-e2e.json
 ```
@@ -115,10 +126,12 @@ test/
 | `settle-win.use-case.spec.ts` | unit | WIN: crédito, ledger, eventos, idempotência, conflitos |
 | `settle-loss.use-case.spec.ts` | unit | LOSS: amount 0, sem ledger, 1 evento, idempotência |
 | `settle-win-loss.use-case.e2e-spec.ts` | e2e | WIN/LOSS PG: snapshot, race WIN×BET, rollback, external id |
-| `refund-wager.use-case.spec.ts` | unit | REFUND: BET válida, WIN inválida, escopo/amount, PENDING_REFERENCE, duplicata, idempotência |
-| `rollback-wager.use-case.spec.ts` | unit | ROLLBACK: BET/WIN/REFUND, saldo negativo, PENDING_REFERENCE, duplicata, idempotência |
+| `refund-wager.use-case.spec.ts` | unit | REFUND: BET válida, WIN inválida, escopo/amount, PENDING_REFERENCE, duplicata, cross-kind vs ROLLBACK |
+| `rollback-wager.use-case.spec.ts` | unit | ROLLBACK: BET/WIN/REFUND, saldo negativo, PENDING_REFERENCE, duplicata, cross-kind vs REFUND |
 | `refund-rollback.use-case.e2e-spec.ts` | e2e | REFUND/ROLLBACK PG: saldo, ledger, PENDING_REFERENCE, race duplicada, UNIQUE, atomicidade |
-| `reprocess-pending-references.use-case.spec.ts` | unit | reprocessamento: REFUND/ROLLBACK, rejeição, 2 pendências, defer, outro provider |
+| `refund-rollback-cross-kind.use-case.e2e-spec.ts` | e2e | H1: REFUND×ROLLBACK sequencial/simultâneo, reprocess, falha técnica, UNIQUE PG, ledger |
+| `unique-any-processed-reversal.migration.spec.ts` | unit | `up`/`down` da 011: UNIQUE cross-kind PROCESSED |
+| `reprocess-pending-references.use-case.spec.ts` | unit | reprocessamento: REFUND/ROLLBACK, rejeição, 2 pendências, cross-kind, defer, outro provider |
 | `reprocess-pending-references.use-case.e2e-spec.ts` | e2e | reprocess PG: saldo/ledger/eventos, corrida, rollback técnico, provider isolation |
 | `wallet.mapper.spec.ts` | unit | `WalletMapper` toPersistence/toDomain e round-trip sem `number` |
 | `get-wallet-balance.use-case.spec.ts` | unit | `GetWalletBalanceUseCase`: encontrada / inexistente (InMemoryWalletRepository) |
@@ -150,7 +163,9 @@ test/
 bun run test:unit -- wager-transaction-result-snapshot.migration
 bun run test:e2e -- wager-transaction-result-snapshot.migration
 bun run test:unit -- refund-rollback.migration
+bun run test:unit -- unique-any-processed-reversal.migration
 bun run test:e2e -- refund-rollback
+bun run test:e2e -- refund-rollback-cross-kind
 bun run test:unit -- reprocess-pending
 bun run test:e2e -- reprocess-pending
 ```
@@ -174,6 +189,7 @@ Pré-requisito: `docker compose up -d postgres localstack` e `bun run migration:
 |---------|------|-------|
 | `messaging/outbox-publisher.use-case.spec.ts` | unit | backoff `next_attempt_at`, API do publisher |
 | `messaging/inbox-consumer.use-case.spec.ts` | unit | inbox nova, duplicata+ACK, falha sem ACK + `changeVisibility(0)` |
+| `messaging/messaging-workers.host.spec.ts` | unit | flag `WORKERS_ENABLED`; ticks outbox/inbox |
 | `messaging/messaging.migration.spec.ts` | unit | SQL up 009 (`locked_until`) e 010 (`inbox_message`) |
 | `messaging/messaging.sqs.e2e-spec.ts` | e2e | publish, retry publish, publishers concorrentes (SKIP LOCKED), inbox/dedupe pós-commit, falha pré-commit, VT/redelivery, recuperação de lease, DLQ (`maxReceiveCount=5`), 3 consumers, saldo/ledger |
 
@@ -183,6 +199,25 @@ bun run test:messaging
 ```
 
 > SQS real via LocalStack (sem mock no e2e). Credenciais `test`/`test` só para endpoint local.
+
+## Multi-instância (Fase B — 3 processos)
+
+Pré-requisito: postgres + localstack + migrations + `bun run apps:up`.
+
+| Arquivo | Tipo | Cobre |
+|---------|------|-------|
+| `multi-instance/multi-instance.e2e-spec.ts` | e2e multi-processo | A1: 50× mesma key; A2: race 80+80; B: wallets distintas; C: outbox/lease; D: idempotência cross-instance; ledger + reconciliação |
+| `multi-instance/helpers.ts` | helper | wait `/health`, round-robin bases, cleanup PG |
+
+```bash
+bun run apps:up
+bun run test:multi-instance
+bun run apps:down   # pare os apps antes de test:messaging / e2e SQS (mesma fila)
+```
+
+Evidências: `instanceId` distintos em `/health/live`; requisições com `base` 3001/3002/3003; `published_at` único por outbox id.
+
+> `test/multi-instance` fica fora do `test:e2e` (`testPathIgnorePatterns`) — exige os containers `app-*`.
 
 ## Banco nos e2e
 

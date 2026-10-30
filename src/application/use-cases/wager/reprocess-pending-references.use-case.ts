@@ -186,7 +186,6 @@ export class ReprocessPendingReferencesUseCase {
 
     const existingProcessed =
       await repos.wagerTransactions.findProcessedReversalByProviderAndExternalReference(
-        pending.kind,
         pending.providerId,
         pending.externalReference,
       );

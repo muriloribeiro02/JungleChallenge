@@ -36,6 +36,9 @@ const ROLLBACK_ALLOWED: ReadonlySet<WagerTransactionKind> = new Set([
 /**
  * Valida referência para REFUND ou ROLLBACK (ordem estável dos failure codes).
  * Retorna null se válida.
+ *
+ * `existingProcessedReversal` é qualquer REFUND/ROLLBACK PROCESSED da mesma
+ * referência (cross-kind) — alinhado ao UNIQUE da migration 011.
  */
 export function validateReversalReference(input: {
   reference: WagerTransaction;

@@ -11,8 +11,12 @@ import { WagerTransactionOrmEntity } from './wager-transaction.orm-entity';
 
 const IDEMPOTENCY_UNIQUE_INDEX = 'UQ_wager_transaction_provider_idempotency';
 const EXTERNAL_ID_UNIQUE_INDEX = 'UQ_wager_transaction_provider_external_id';
-const REFUND_PROCESSED_REF_INDEX = 'UQ_wager_transaction_refund_processed_ref';
-const ROLLBACK_PROCESSED_REF_INDEX =
+/** Unicidade cross-kind (migration 011); nomes 007 mantidos no matcher por down. */
+const PROCESSED_REVERSAL_REF_INDEX =
+  'UQ_wager_transaction_processed_reversal_ref';
+const LEGACY_REFUND_PROCESSED_REF_INDEX =
+  'UQ_wager_transaction_refund_processed_ref';
+const LEGACY_ROLLBACK_PROCESSED_REF_INDEX =
   'UQ_wager_transaction_rollback_processed_ref';
 
 export class TypeOrmWagerTransactionRepository
@@ -36,8 +40,9 @@ export class TypeOrmWagerTransactionRepository
         throw new ExternalTransactionIdConflictError();
       }
       if (
-        uniqueIndex === REFUND_PROCESSED_REF_INDEX ||
-        uniqueIndex === ROLLBACK_PROCESSED_REF_INDEX
+        uniqueIndex === PROCESSED_REVERSAL_REF_INDEX ||
+        uniqueIndex === LEGACY_REFUND_PROCESSED_REF_INDEX ||
+        uniqueIndex === LEGACY_ROLLBACK_PROCESSED_REF_INDEX
       ) {
         throw new ReferenceAlreadyReversedConflictError();
       }
@@ -72,18 +77,18 @@ export class TypeOrmWagerTransactionRepository
   }
 
   async findProcessedReversalByProviderAndExternalReference(
-    kind: 'REFUND' | 'ROLLBACK',
     providerId: string,
     externalReference: string,
   ): Promise<WagerTransaction | null> {
-    const row = await this.transactions.findOne({
-      where: {
-        kind,
-        providerId,
+    const row = await this.transactions
+      .createQueryBuilder('tx')
+      .where('tx.provider_id = :providerId', { providerId })
+      .andWhere('tx.external_reference = :externalReference', {
         externalReference,
-        status: 'PROCESSED',
-      },
-    });
+      })
+      .andWhere('tx.status = :status', { status: 'PROCESSED' })
+      .andWhere('tx.kind IN (:...kinds)', { kinds: ['REFUND', 'ROLLBACK'] })
+      .getOne();
     if (!row) {
       return null;
     }
@@ -156,8 +161,9 @@ function getUniqueViolationIndexName(error: unknown): string | null {
   const known = [
     IDEMPOTENCY_UNIQUE_INDEX,
     EXTERNAL_ID_UNIQUE_INDEX,
-    REFUND_PROCESSED_REF_INDEX,
-    ROLLBACK_PROCESSED_REF_INDEX,
+    PROCESSED_REVERSAL_REF_INDEX,
+    LEGACY_REFUND_PROCESSED_REF_INDEX,
+    LEGACY_ROLLBACK_PROCESSED_REF_INDEX,
   ];
   if (named && known.includes(named)) {
     return named;

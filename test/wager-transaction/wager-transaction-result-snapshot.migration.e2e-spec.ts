@@ -12,6 +12,7 @@ import { RefundRollbackPendingAndUniqueReversal1761690006000 } from '../../src/i
 import { IndexPendingReferenceLookup1761690007000 } from '../../src/infrastructure/database/migrations/008-Index_pending_reference_lookup';
 import { OutboxClaimLockedUntil1761690008000 } from '../../src/infrastructure/database/migrations/009-Outbox_claim_locked_until';
 import { CreateInboxMessageTable1761690009000 } from '../../src/infrastructure/database/migrations/010-Create_table_inbox_message';
+import { UniqueAnyProcessedReversalPerReference1761690010000 } from '../../src/infrastructure/database/migrations/011-Unique_any_processed_reversal_per_reference';
 
 describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
   let dataSource: DataSource;
@@ -22,6 +23,8 @@ describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
   const migration008Name = new IndexPendingReferenceLookup1761690007000().name;
   const migration009Name = new OutboxClaimLockedUntil1761690008000().name;
   const migration010Name = new CreateInboxMessageTable1761690009000().name;
+  const migration011Name =
+    new UniqueAnyProcessedReversalPerReference1761690010000().name;
 
   async function columnExists(columnName: string): Promise<boolean> {
     const client = createDbClient();
@@ -96,6 +99,7 @@ describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
       migration008Name,
       migration009Name,
       migration010Name,
+      migration011Name,
     ]);
     expect(await columnExists('observed_balance')).toBe(true);
     expect(await columnExists('observed_wallet_version')).toBe(true);

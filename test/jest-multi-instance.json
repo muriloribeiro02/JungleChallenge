@@ -1,0 +1,11 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": "multi-instance/.*\\.e2e-spec\\.ts$",
+  "maxWorkers": 1,
+  "testTimeout": 180000,
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  }
+}

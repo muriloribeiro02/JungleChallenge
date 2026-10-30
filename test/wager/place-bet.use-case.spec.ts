@@ -82,14 +82,13 @@ class FakeTx implements WagerTransactionRepository {
     );
   }
   async findProcessedReversalByProviderAndExternalReference(
-    kind: 'REFUND' | 'ROLLBACK',
     providerId: string,
     externalReference: string,
   ): Promise<WagerTransaction | null> {
     return (
       this.items.find(
         (t) =>
-          t.kind === kind &&
+          (t.kind === 'REFUND' || t.kind === 'ROLLBACK') &&
           t.status === 'PROCESSED' &&
           t.providerId === providerId &&
           t.externalReference === externalReference,
@@ -126,6 +125,17 @@ class FakeLedger implements WalletLedgerEntryRepository {
 
   async save(entry: WalletLedgerEntry): Promise<void> {
     this.items.push(entry);
+  }
+
+  async listByWalletId(walletId: string, options: { cursor?: string | null; limit: number }) {
+    const items = this.items.filter((e) => e.walletId === walletId).slice(0, options.limit);
+    return { items, nextCursor: null };
+  }
+  async listAllByWalletId(walletId: string) {
+    return this.items.filter((e) => e.walletId === walletId);
+  }
+  async countByWalletId(walletId: string) {
+    return this.items.filter((e) => e.walletId === walletId).length;
   }
 }
 
