@@ -53,7 +53,8 @@ test/
     outbox-message.migration.spec.ts      # unit: SQL up/down outbox
     outbox-message.constraints.e2e-spec.ts # e2e: imutabilidade + campos operacionais
   wager-transaction/
-    wager-transaction.entity.spec.ts      # unit: OPENING/PROCESSED
+    wager-transaction.entity.spec.ts      # unit: OPENING/BET + snapshot
+    wager-transaction.mapper.spec.ts      # unit: ORM ↔ domínio + snapshot
     wager-transaction.migration.spec.ts   # unit: SQL up/down wager_transaction
     wager-transaction-result-snapshot.migration.spec.ts # unit: SQL up/down 006 snapshot
     wager-transaction-result-snapshot.migration.e2e-spec.ts # e2e: 006 colunas, backfill, CHECKs
@@ -87,10 +88,11 @@ test/
 | `open-wallet.use-case.spec.ts` | unit | `OpenWalletUseCase`: zero / positivo / negativo / duplicata / orquestração |
 | `open-wallet.use-case.e2e-spec.ts` | e2e | abertura no Postgres: persistência, duplicata, rollback real |
 | `place-bet.use-case.spec.ts` | unit | `PlaceBetUseCase`: aprovada, REJECTED, idempotência, conflito, amount |
-| `place-bet.use-case.e2e-spec.ts` | e2e | BET PG: sucesso, rejeição, concorrência (80/100 e 80+80/50), replay, conflito, rollback |
+| `place-bet.use-case.e2e-spec.ts` | e2e | BET PG: snapshot, replay sem outbox, legado sem snapshot, concorrência, rollback |
 
 > E2E: `maxWorkers: 1` em `jest-e2e.json` para evitar corrida na mesma base. Limpeza de ledger usa `SET LOCAL session_replication_role = 'replica'` (sem desabilitar trigger globalmente).
-| `wager-transaction.entity.spec.ts` | unit | `WagerTransaction.openingProcessed`: OPENING/PROCESSED, amount positivo Money |
+| `wager-transaction.entity.spec.ts` | unit | OPENING/BET + snapshot; currency mismatch; legado NULL; parcial |
+| `wager-transaction.mapper.spec.ts` | unit | snapshot round-trip escala 2; legado NULL sem inventar |
 | `wallet-ledger-entry.entity.spec.ts` | unit | `credit`/`debit`/`rehydrate`: equação de saldo, moedas, `balanceAfter` negativo, freeze + Date defensivo |
 | `wager-transaction.migration.spec.ts` | unit | `up`/`down` da `CreateWagerTransactionTable` |
 | `wager-transaction-result-snapshot.migration.spec.ts` | unit | `up`/`down` da 006: colunas nullable, backfill ledger, CHECKs |

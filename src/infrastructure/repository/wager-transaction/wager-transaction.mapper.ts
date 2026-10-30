@@ -32,6 +32,8 @@ export class WagerTransactionMapper {
     row.externalReference = null;
     row.resolvedInternalReference = null;
     row.failureCode = transaction.failureCode;
+    row.observedBalance = transaction.observedBalance?.toString() ?? null;
+    row.observedWalletVersion = transaction.observedWalletVersion;
     row.createdAt = transaction.createdAt;
     row.updatedAt = transaction.updatedAt;
     return row;
@@ -78,6 +80,14 @@ export class WagerTransactionMapper {
       roundId: row.roundId,
       gameId: row.gameId,
       failureCode: (row.failureCode as WagerFailureCode | null) ?? null,
+      observedBalance:
+        row.observedBalance === null
+          ? null
+          : {
+              amount: new Decimal(row.observedBalance).toFixed(2),
+              currency: row.currency,
+            },
+      observedWalletVersion: row.observedWalletVersion,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     });

@@ -3,6 +3,7 @@ import { PlaceBetUseCase } from '../../src/application/use-cases/wager/place-bet
 import {
   IdempotencyPayloadConflictError,
   InvalidPlaceBetInputError,
+  TerminalTransactionSnapshotMissingError,
   WalletCurrencyMismatchForBetError,
   WalletPlayerMismatchError,
 } from '../../src/application/use-cases/wager/place-bet.errors';
@@ -16,7 +17,11 @@ import type { OutboxMessage } from '../../src/domain/outbox/outbox-message.entit
 import type { OutboxMessageRepository } from '../../src/domain/outbox/outbox-message.repository';
 import { Wallet } from '../../src/domain/wallet/wallet.entity';
 import type { WalletRepository } from '../../src/domain/wallet/wallet.repository';
-import type { WagerTransaction } from '../../src/domain/wager-transaction/wager-transaction.entity';
+import {
+  WAGER_TRANSACTION_STATUS_PROCESSED,
+  WAGER_TRANSACTION_TYPE_BET,
+  WagerTransaction,
+} from '../../src/domain/wager-transaction/wager-transaction.entity';
 import type { WagerTransactionRepository } from '../../src/domain/wager-transaction/wager-transaction.repository';
 import type { WalletLedgerEntry } from '../../src/domain/wallet-ledger/wallet-ledger-entry.entity';
 import type { WalletLedgerEntryRepository } from '../../src/domain/wallet-ledger/wallet-ledger-entry.repository';
@@ -140,16 +145,19 @@ describe('PlaceBetUseCase', () => {
     };
   }
 
-  it('aprova BET: debita, ledger DEBIT, version++, dois eventos', async () => {
+  it('aprova BET: debita, ledger DEBIT, version++, dois eventos e snapshot', async () => {
     const ctx = setup('100.00');
     const result = await ctx.useCase.execute(buildInput(ctx.wallet));
 
     expect(result.status).toBe('PROCESSED');
     expect(result.observedBalance).toBe('60.00');
+    expect(result.walletVersion).toBe(2);
     expect(ctx.wallets.wallet!.version).toBe(2);
     expect(ctx.wallets.wallet!.balance.toString()).toBe('60.00');
     expect(ctx.txs.items).toHaveLength(1);
     expect(ctx.txs.items[0].status).toBe('PROCESSED');
+    expect(ctx.txs.items[0].observedBalance?.toString()).toBe('60.00');
+    expect(ctx.txs.items[0].observedWalletVersion).toBe(2);
     expect(ctx.ledger.items).toHaveLength(1);
     expect(ctx.ledger.items[0].direction).toBe('DEBIT');
     expect(ctx.outbox.items.map((m) => m.eventType).sort()).toEqual([
@@ -169,8 +177,11 @@ describe('PlaceBetUseCase', () => {
     expect(result.status).toBe('REJECTED');
     expect(result.failureCode).toBe('INSUFFICIENT_FUNDS');
     expect(result.observedBalance).toBe('10.00');
+    expect(result.walletVersion).toBe(versionBefore);
     expect(ctx.wallets.wallet!.version).toBe(versionBefore);
     expect(ctx.wallets.wallet!.balance.toString()).toBe('10.00');
+    expect(ctx.txs.items[0].observedBalance?.toString()).toBe('10.00');
+    expect(ctx.txs.items[0].observedWalletVersion).toBe(versionBefore);
     expect(ctx.ledger.items).toHaveLength(0);
     expect(ctx.outbox.items.map((m) => m.eventType)).toEqual([
       'WagerTransactionRejected',
@@ -201,6 +212,69 @@ describe('PlaceBetUseCase', () => {
     expect(ctx.txs.items).toHaveLength(1);
     expect(ctx.ledger.items).toHaveLength(1);
     expect(ctx.wallets.wallet!.balance.toString()).toBe('60.00');
+  });
+
+  it('replay preserva observedBalance após saldo atual mudar', async () => {
+    const ctx = setup('100.00');
+    const input = buildInput(ctx.wallet, { amount: '40.00' });
+    const first = await ctx.useCase.execute(input);
+
+    await ctx.wallets.save(
+      Wallet.rehydrate({
+        id: ctx.wallet.id,
+        playerId: ctx.wallet.playerId,
+        currency: 'BRL',
+        balance: { amount: '10.00', currency: 'BRL' },
+        version: 99,
+        createdAt: ctx.wallet.createdAt,
+        updatedAt: new Date(),
+      }),
+    );
+
+    const second = await ctx.useCase.execute(input);
+    expect(second.observedBalance).toBe(first.observedBalance);
+    expect(second.observedBalance).toBe('60.00');
+    expect(second.walletVersion).toBe(first.walletVersion);
+    expect(second.walletVersion).toBe(2);
+    expect(ctx.wallets.wallet!.balance.toString()).toBe('10.00');
+  });
+
+  it('replay de terminal legado sem snapshot falha explicitamente', async () => {
+    const ctx = setup('100.00');
+    const input = buildInput(ctx.wallet, { amount: '10.00' });
+    const payloadHash = computeBetPayloadHash({
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: '10.00',
+      currency: 'BRL',
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      kind: 'BET',
+    });
+
+    ctx.txs.items.push(
+      WagerTransaction.rehydrate({
+        id: randomUUID(),
+        walletId: input.walletId,
+        playerId: input.playerId,
+        type: WAGER_TRANSACTION_TYPE_BET,
+        status: WAGER_TRANSACTION_STATUS_PROCESSED,
+        amount: { amount: '10.00', currency: 'BRL' },
+        providerId: input.providerId,
+        externalTransactionId: input.externalTransactionId,
+        idempotencyKey: input.idempotencyKey,
+        payloadHash,
+        roundId: input.roundId,
+        gameId: input.gameId,
+        failureCode: null,
+      }),
+    );
+
+    await expect(ctx.useCase.execute(input)).rejects.toBeInstanceOf(
+      TerminalTransactionSnapshotMissingError,
+    );
   });
 
   it('mesma chave com payload diferente gera conflito', async () => {

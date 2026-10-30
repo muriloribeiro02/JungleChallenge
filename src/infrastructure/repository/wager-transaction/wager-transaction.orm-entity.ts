@@ -10,6 +10,16 @@ const numericStringTransformer = {
   },
 };
 
+const nullableNumericStringTransformer = {
+  to: (value: string | null): string | null => value,
+  from: (value: string | null): string | null => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    return String(value);
+  },
+};
+
 @Entity({ name: 'wager_transaction' })
 export class WagerTransactionOrmEntity {
   @PrimaryColumn({ type: 'uuid' })
@@ -88,6 +98,23 @@ export class WagerTransactionOrmEntity {
 
   @Column({ name: 'failure_code', type: 'varchar', length: 64, nullable: true })
   failureCode!: string | null;
+
+  @Column({
+    name: 'observed_balance',
+    type: 'numeric',
+    precision: 19,
+    scale: 4,
+    nullable: true,
+    transformer: nullableNumericStringTransformer,
+  })
+  observedBalance!: string | null;
+
+  @Column({
+    name: 'observed_wallet_version',
+    type: 'integer',
+    nullable: true,
+  })
+  observedWalletVersion!: number | null;
 
   @Column({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

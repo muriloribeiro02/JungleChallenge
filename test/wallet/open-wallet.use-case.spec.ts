@@ -184,6 +184,10 @@ describe('OpenWalletUseCase', () => {
     expect(uow.wagerTransactions.items).toHaveLength(1);
     expect(uow.wagerTransactions.items[0].type).toBe('OPENING');
     expect(uow.wagerTransactions.items[0].status).toBe('PROCESSED');
+    expect(uow.wagerTransactions.items[0].observedBalance?.toString()).toBe(
+      '100.00',
+    );
+    expect(uow.wagerTransactions.items[0].observedWalletVersion).toBe(1);
     expect(uow.ledgerEntries.items).toHaveLength(1);
     expect(uow.ledgerEntries.items[0].direction).toBe('CREDIT');
     expect(uow.outboxMessages.items).toHaveLength(2);

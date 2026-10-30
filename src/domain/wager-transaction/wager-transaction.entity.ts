@@ -1,5 +1,8 @@
 import { Money, type MoneyProps } from '../money/money';
+import type { OperationResultSnapshot } from './operation-result-snapshot';
 import { InvalidWagerTransactionError } from './wager-transaction.errors';
+
+export type { OperationResultSnapshot } from './operation-result-snapshot';
 
 export const WAGER_TRANSACTION_TYPE_OPENING = 'OPENING' as const;
 export const WAGER_TRANSACTION_TYPE_BET = 'BET' as const;
@@ -26,6 +29,7 @@ export type OpeningProcessedProps = {
   id: string;
   walletId: string;
   amount: Money;
+  snapshot: OperationResultSnapshot;
 };
 
 export type ExternalBetProps = {
@@ -39,6 +43,7 @@ export type ExternalBetProps = {
   payloadHash: string;
   roundId: string;
   gameId: string;
+  snapshot: OperationResultSnapshot;
 };
 
 export type WagerTransactionState = {
@@ -55,6 +60,9 @@ export type WagerTransactionState = {
   roundId: string | null;
   gameId: string | null;
   failureCode: WagerFailureCode | null;
+  /** Legado: ambos null/ausentes. Snapshot completo: ambos preenchidos. */
+  observedBalance?: MoneyProps | null;
+  observedWalletVersion?: number | null;
   createdAt?: Date | string;
   updatedAt?: Date | string;
 };
@@ -79,12 +87,22 @@ export class WagerTransaction {
     public readonly roundId: string | null,
     public readonly gameId: string | null,
     public readonly failureCode: WagerFailureCode | null,
+    private readonly _observedBalance: Money | null,
+    private readonly _observedWalletVersion: number | null,
     public readonly createdAt: Date,
     public readonly updatedAt: Date,
   ) {}
 
   get kind(): WagerTransactionKind {
     return this.type;
+  }
+
+  get observedBalance(): Money | null {
+    return this._observedBalance;
+  }
+
+  get observedWalletVersion(): number | null {
+    return this._observedWalletVersion;
   }
 
   get isTerminal(): boolean {
@@ -98,6 +116,10 @@ export class WagerTransaction {
     WagerTransaction.assertRequiredId(props.id, 'id');
     WagerTransaction.assertRequiredId(props.walletId, 'walletId');
     WagerTransaction.assertPositiveMoney(props.amount, 'OPENING');
+    const snapshot = WagerTransaction.assertSnapshot(
+      props.snapshot,
+      props.amount,
+    );
 
     const now = new Date();
     return new WagerTransaction(
@@ -114,6 +136,8 @@ export class WagerTransaction {
       null,
       null,
       null,
+      snapshot.observedBalance,
+      snapshot.observedWalletVersion,
       now,
       now,
     );
@@ -122,6 +146,10 @@ export class WagerTransaction {
   static betProcessed(props: ExternalBetProps): WagerTransaction {
     WagerTransaction.assertExternalBetProps(props);
     WagerTransaction.assertPositiveMoney(props.amount, 'BET');
+    const snapshot = WagerTransaction.assertSnapshot(
+      props.snapshot,
+      props.amount,
+    );
 
     const now = new Date();
     return new WagerTransaction(
@@ -138,6 +166,8 @@ export class WagerTransaction {
       props.roundId,
       props.gameId,
       null,
+      snapshot.observedBalance,
+      snapshot.observedWalletVersion,
       now,
       now,
     );
@@ -148,6 +178,10 @@ export class WagerTransaction {
   ): WagerTransaction {
     WagerTransaction.assertExternalBetProps(props);
     WagerTransaction.assertPositiveMoney(props.amount, 'BET');
+    const snapshot = WagerTransaction.assertSnapshot(
+      props.snapshot,
+      props.amount,
+    );
 
     const now = new Date();
     return new WagerTransaction(
@@ -164,19 +198,24 @@ export class WagerTransaction {
       props.roundId,
       props.gameId,
       FAILURE_CODE_INSUFFICIENT_FUNDS,
+      snapshot.observedBalance,
+      snapshot.observedWalletVersion,
       now,
       now,
     );
   }
 
   static rehydrate(state: WagerTransactionState): WagerTransaction {
+    const amount = Money.from(state.amount);
+    const snapshot = WagerTransaction.rehydrateSnapshot(state, amount);
+
     return new WagerTransaction(
       state.id,
       state.walletId,
       state.playerId,
       state.type,
       state.status,
-      Money.from(state.amount),
+      amount,
       state.providerId,
       state.externalTransactionId,
       state.idempotencyKey,
@@ -184,9 +223,84 @@ export class WagerTransaction {
       state.roundId,
       state.gameId,
       state.failureCode,
+      snapshot.observedBalance,
+      snapshot.observedWalletVersion,
       WagerTransaction.toDate(state.createdAt ?? new Date()),
       WagerTransaction.toDate(state.updatedAt ?? new Date()),
     );
+  }
+
+  private static rehydrateSnapshot(
+    state: WagerTransactionState,
+    transactionAmount: Money,
+  ): {
+    observedBalance: Money | null;
+    observedWalletVersion: number | null;
+  } {
+    const hasBalance =
+      state.observedBalance !== undefined && state.observedBalance !== null;
+    const hasVersion =
+      state.observedWalletVersion !== undefined &&
+      state.observedWalletVersion !== null;
+
+    if (!hasBalance && !hasVersion) {
+      return { observedBalance: null, observedWalletVersion: null };
+    }
+
+    if (hasBalance !== hasVersion) {
+      throw new InvalidWagerTransactionError(
+        'snapshot legado inconsistente: observedBalance e observedWalletVersion devem existir juntos',
+      );
+    }
+
+    return WagerTransaction.assertSnapshot(
+      {
+        observedBalance: Money.from(state.observedBalance as MoneyProps),
+        observedWalletVersion: state.observedWalletVersion as number,
+      },
+      transactionAmount,
+    );
+  }
+
+  private static assertSnapshot(
+    snapshot: OperationResultSnapshot | null | undefined,
+    transactionAmount: Money,
+  ): OperationResultSnapshot {
+    if (snapshot == null || typeof snapshot !== 'object') {
+      throw new InvalidWagerTransactionError(
+        'snapshot do resultado é obrigatório para operações terminais',
+      );
+    }
+
+    if (!(snapshot.observedBalance instanceof Money)) {
+      throw new InvalidWagerTransactionError(
+        'observedBalance deve ser uma instância de Money',
+      );
+    }
+
+    if (snapshot.observedBalance.isNegative()) {
+      throw new InvalidWagerTransactionError(
+        'observedBalance não pode ser negativo',
+      );
+    }
+
+    if (snapshot.observedBalance.currency !== transactionAmount.currency) {
+      throw new InvalidWagerTransactionError(
+        'observedBalance.currency deve ser igual à currency da transação',
+      );
+    }
+
+    if (
+      typeof snapshot.observedWalletVersion !== 'number' ||
+      !Number.isInteger(snapshot.observedWalletVersion) ||
+      snapshot.observedWalletVersion < 1
+    ) {
+      throw new InvalidWagerTransactionError(
+        'observedWalletVersion deve ser um inteiro >= 1',
+      );
+    }
+
+    return snapshot;
   }
 
   private static assertExternalBetProps(props: ExternalBetProps): void {

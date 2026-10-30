@@ -57,46 +57,71 @@ export type WagerTransactionInsert = {
   externalReference?: string | null;
   resolvedInternalReference?: string | null;
   failureCode?: string | null;
+  observedBalance?: string | null;
+  observedWalletVersion?: number | null;
 };
 
 export async function insertWagerTransaction(
   client: Client,
   input: WagerTransactionInsert,
 ): Promise<QueryResult<QueryResultRow>> {
+  const includeSnapshot =
+    'observedBalance' in input || 'observedWalletVersion' in input;
+
+  const columns = [
+    'id',
+    'wallet_id',
+    'player_id',
+    'kind',
+    'status',
+    'amount',
+    'currency',
+    'provider_id',
+    'external_transaction_id',
+    'idempotency_key',
+    'payload_hash',
+    'round_id',
+    'game_id',
+    'external_reference',
+    'resolved_internal_reference',
+    'failure_code',
+  ];
+  const values: unknown[] = [
+    input.id ?? randomUUID(),
+    input.walletId,
+    input.playerId ?? null,
+    input.kind,
+    input.status,
+    input.amount,
+    input.currency,
+    input.providerId ?? null,
+    input.externalTransactionId ?? null,
+    input.idempotencyKey ?? null,
+    input.payloadHash ?? null,
+    input.roundId ?? null,
+    input.gameId ?? null,
+    input.externalReference ?? null,
+    input.resolvedInternalReference ?? null,
+    input.failureCode ?? null,
+  ];
+
+  if (includeSnapshot) {
+    columns.push('observed_balance', 'observed_wallet_version');
+    values.push(
+      input.observedBalance ?? null,
+      input.observedWalletVersion ?? null,
+    );
+  }
+
+  const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+
   return client.query(
     `
-      INSERT INTO wager_transaction (
-        id, wallet_id, player_id, kind, status, amount, currency,
-        provider_id, external_transaction_id, idempotency_key, payload_hash,
-        round_id, game_id, external_reference, resolved_internal_reference,
-        failure_code
-      )
-      VALUES (
-        $1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11,
-        $12, $13, $14, $15,
-        $16
-      )
+      INSERT INTO wager_transaction (${columns.join(', ')})
+      VALUES (${placeholders})
       RETURNING *
     `,
-    [
-      input.id ?? randomUUID(),
-      input.walletId,
-      input.playerId ?? null,
-      input.kind,
-      input.status,
-      input.amount,
-      input.currency,
-      input.providerId ?? null,
-      input.externalTransactionId ?? null,
-      input.idempotencyKey ?? null,
-      input.payloadHash ?? null,
-      input.roundId ?? null,
-      input.gameId ?? null,
-      input.externalReference ?? null,
-      input.resolvedInternalReference ?? null,
-      input.failureCode ?? null,
-    ],
+    values,
   );
 }
 

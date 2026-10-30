@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { Money } from '../../../domain/money/money';
-import type { OutboxMessage } from '../../../domain/outbox/outbox-message.entity';
 import { OutboxMessage as OutboxMessageEntity } from '../../../domain/outbox/outbox-message.entity';
 import type { Wallet } from '../../../domain/wallet/wallet.entity';
 import {
@@ -20,6 +19,7 @@ import {
 } from '../../events/wallet-opening.events';
 import { buildWagerTransactionRejectedEvent } from '../../events/wager-bet.events';
 import type { UnitOfWork } from '../../unit-of-work/unit-of-work';
+import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import {
   computeBetPayloadHash,
   type BetBusinessPayload,
@@ -28,6 +28,7 @@ import {
   ExternalTransactionConflictError,
   IdempotencyPayloadConflictError,
   InvalidPlaceBetInputError,
+  TerminalTransactionSnapshotMissingError,
   WalletCurrencyMismatchForBetError,
   WalletNotFoundForBetError,
   WalletPlayerMismatchError,
@@ -65,6 +66,8 @@ export type PlaceBetOutput = {
  * Idempotência UNIQUE (23505): o Postgres aborta a transação atual. Por isso
  * o conflito é capturado fora do UoW e a releitura/replay ocorre em uma
  * **nova** transação — nunca na mesma conexão abortada.
+ *
+ * Replay: observedBalance/walletVersion vêm só de wager_transaction (snapshot).
  */
 export class PlaceBetUseCase {
   constructor(private readonly unitOfWork: UnitOfWork) {}
@@ -133,7 +136,6 @@ export class PlaceBetUseCase {
 
     if (existing) {
       return this.buildReplayFromExisting(
-        repos,
         existing,
         payloadHash,
         input.providerId,
@@ -161,7 +163,6 @@ export class PlaceBetUseCase {
       );
     if (again) {
       return this.buildReplayFromExisting(
-        repos,
         again,
         payloadHash,
         input.providerId,
@@ -169,7 +170,7 @@ export class PlaceBetUseCase {
       );
     }
 
-    const externalProps = {
+    const externalBase = {
       id: randomUUID(),
       walletId: wallet.id,
       playerId: input.playerId,
@@ -185,19 +186,14 @@ export class PlaceBetUseCase {
     const correlationId = input.idempotencyKey;
 
     if (wallet.balance.isLessThan(amount)) {
-      return this.persistRejected(
-        repos,
-        wallet,
-        externalProps,
-        correlationId,
-      );
+      return this.persistRejected(repos, wallet, externalBase, correlationId);
     }
 
     return this.persistProcessed(
       repos,
       wallet,
       amount,
-      externalProps,
+      externalBase,
       correlationId,
     );
   }
@@ -206,13 +202,20 @@ export class PlaceBetUseCase {
     repos: Parameters<Parameters<UnitOfWork['run']>[0]>[0],
     wallet: Wallet,
     amount: Money,
-    externalProps: Parameters<typeof WagerTransaction.betProcessed>[0],
+    externalBase: Omit<
+      Parameters<typeof WagerTransaction.betProcessed>[0],
+      'snapshot'
+    >,
     correlationId: string,
   ): Promise<PlaceBetOutput> {
     const balanceBefore = wallet.balance;
     wallet.debit(amount);
+    const snapshot = captureWalletSnapshot(wallet);
 
-    const transaction = WagerTransaction.betProcessed(externalProps);
+    const transaction = WagerTransaction.betProcessed({
+      ...externalBase,
+      snapshot,
+    });
     const ledgerEntry = WalletLedgerEntry.debit({
       id: randomUUID(),
       walletId: wallet.id,
@@ -250,26 +253,29 @@ export class PlaceBetUseCase {
       status: WAGER_TRANSACTION_STATUS_PROCESSED,
       amount: amount.toString(),
       currency: amount.currency,
-      observedBalance: wallet.balance.toString(),
-      walletVersion: wallet.version,
+      observedBalance: snapshot.observedBalance.toString(),
+      walletVersion: snapshot.observedWalletVersion,
     };
   }
 
   private async persistRejected(
     repos: Parameters<Parameters<UnitOfWork['run']>[0]>[0],
     wallet: Wallet,
-    externalProps: Parameters<
-      typeof WagerTransaction.betRejectedInsufficientFunds
-    >[0],
+    externalBase: Omit<
+      Parameters<typeof WagerTransaction.betRejectedInsufficientFunds>[0],
+      'snapshot'
+    >,
     correlationId: string,
   ): Promise<PlaceBetOutput> {
-    const observedBalance = wallet.balance.toString();
-    const transaction =
-      WagerTransaction.betRejectedInsufficientFunds(externalProps);
+    const snapshot = captureWalletSnapshot(wallet);
+    const transaction = WagerTransaction.betRejectedInsufficientFunds({
+      ...externalBase,
+      snapshot,
+    });
 
     const rejectedEvent = buildWagerTransactionRejectedEvent({
       transaction,
-      observedBalance,
+      observedBalance: snapshot.observedBalance.toString(),
       correlationId,
     });
 
@@ -285,8 +291,8 @@ export class PlaceBetUseCase {
       failureCode: FAILURE_CODE_INSUFFICIENT_FUNDS,
       amount: transaction.amount.toString(),
       currency: transaction.amount.currency,
-      observedBalance,
-      walletVersion: wallet.version,
+      observedBalance: snapshot.observedBalance.toString(),
+      walletVersion: snapshot.observedWalletVersion,
     };
   }
 
@@ -309,7 +315,6 @@ export class PlaceBetUseCase {
     }
 
     return this.buildReplayFromExisting(
-      repos,
       existing,
       payloadHash,
       providerId,
@@ -317,31 +322,22 @@ export class PlaceBetUseCase {
     );
   }
 
-  private async buildReplayFromExisting(
-    repos: Parameters<Parameters<UnitOfWork['run']>[0]>[0],
+  private buildReplayFromExisting(
     existing: WagerTransaction,
     payloadHash: string,
     providerId: string,
     idempotencyKey: string,
-  ): Promise<PlaceBetOutput> {
+  ): PlaceBetOutput {
     if (existing.payloadHash !== payloadHash) {
       throw new IdempotencyPayloadConflictError(providerId, idempotencyKey);
     }
 
-    // observedBalance vem só dos eventos cujo aggregateId é a própria transação
-    // (Processed/Rejected) — não varre o histórico da carteira.
-    const txMessages = await repos.outboxMessages.findByAggregateId(
-      existing.id,
-    );
-    const observedBalance = extractObservedBalance(txMessages, existing);
-
-    const walletMessages = await repos.outboxMessages.findByAggregateId(
-      existing.walletId,
-    );
-    const walletVersion = extractWalletVersionForTransaction(
-      walletMessages,
-      existing.id,
-    );
+    if (
+      existing.observedBalance === null ||
+      existing.observedWalletVersion === null
+    ) {
+      throw new TerminalTransactionSnapshotMissingError(existing.id);
+    }
 
     if (existing.status === WAGER_TRANSACTION_STATUS_REJECTED) {
       return {
@@ -351,8 +347,8 @@ export class PlaceBetUseCase {
         failureCode: FAILURE_CODE_INSUFFICIENT_FUNDS,
         amount: existing.amount.toString(),
         currency: existing.amount.currency,
-        observedBalance,
-        walletVersion,
+        observedBalance: existing.observedBalance.toString(),
+        walletVersion: existing.observedWalletVersion,
       };
     }
 
@@ -362,8 +358,8 @@ export class PlaceBetUseCase {
       status: WAGER_TRANSACTION_STATUS_PROCESSED,
       amount: existing.amount.toString(),
       currency: existing.amount.currency,
-      observedBalance,
-      walletVersion,
+      observedBalance: existing.observedBalance.toString(),
+      walletVersion: existing.observedWalletVersion,
     };
   }
 
@@ -387,42 +383,4 @@ export class PlaceBetUseCase {
       }
     }
   }
-}
-
-function extractObservedBalance(
-  messages: OutboxMessage[],
-  transaction: WagerTransaction,
-): string {
-  for (const message of messages) {
-    const data = message.payload.data as { observedBalance?: string };
-    if (typeof data?.observedBalance === 'string') {
-      return data.observedBalance;
-    }
-  }
-
-  throw new InvalidPlaceBetInputError(
-    `Replay sem observedBalance na outbox da transação ${transaction.id}`,
-  );
-}
-
-function extractWalletVersionForTransaction(
-  messages: OutboxMessage[],
-  transactionId: string,
-): number | undefined {
-  for (const message of messages) {
-    if (message.eventType !== 'WalletBalanceChanged') {
-      continue;
-    }
-    const data = message.payload.data as {
-      walletVersion?: number;
-      transactionId?: string;
-    };
-    if (
-      data?.transactionId === transactionId &&
-      typeof data.walletVersion === 'number'
-    ) {
-      return data.walletVersion;
-    }
-  }
-  return undefined;
 }

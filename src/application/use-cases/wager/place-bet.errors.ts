@@ -35,3 +35,12 @@ export class ExternalTransactionConflictError extends ApplicationError {
     );
   }
 }
+
+/** Transação terminal sem snapshot durável — dado legado inconsistente para replay. */
+export class TerminalTransactionSnapshotMissingError extends ApplicationError {
+  constructor(transactionId: string) {
+    super(
+      `Replay impossível: transação terminal ${transactionId} sem observed_balance/observed_wallet_version`,
+    );
+  }
+}

@@ -10,6 +10,7 @@ import {
   buildWalletBalanceChangedEvent,
 } from '../../events/wallet-opening.events';
 import type { UnitOfWork } from '../../unit-of-work/unit-of-work';
+import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import { InvalidOpenWalletInputError } from './open-wallet.errors';
 
 export type OpenWalletInput = {
@@ -64,10 +65,12 @@ export class OpenWalletUseCase {
           return toOutput(wallet);
         }
 
+        const snapshot = captureWalletSnapshot(wallet);
         const transaction = WagerTransaction.openingProcessed({
           id: randomUUID(),
           walletId: wallet.id,
           amount: initialBalance,
+          snapshot,
         });
 
         const zero = Money.zero(initialBalance.currency);

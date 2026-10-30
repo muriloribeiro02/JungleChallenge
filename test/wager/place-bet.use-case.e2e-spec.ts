@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { DataSource } from 'typeorm';
 import { OpenWalletUseCase } from '../../src/application/use-cases/wallet/open-wallet.use-case';
 import { PlaceBetUseCase } from '../../src/application/use-cases/wager/place-bet.use-case';
-import { IdempotencyPayloadConflictError } from '../../src/application/use-cases/wager/place-bet.errors';
+import {
+  IdempotencyPayloadConflictError,
+  TerminalTransactionSnapshotMissingError,
+} from '../../src/application/use-cases/wager/place-bet.errors';
+import { computeBetPayloadHash } from '../../src/application/wager/canonical-payload-hash';
 import dataSource from '../../src/infrastructure/database/data-source';
 import { TypeOrmUnitOfWork } from '../../src/infrastructure/unit-of-work/typeorm-unit-of-work';
 
@@ -118,10 +122,17 @@ describe('PlaceBetUseCase (e2e postgres)', () => {
     expect(row[0].version).toBe(2);
 
     const txs = await connection.query(
-      `SELECT kind, status FROM wager_transaction WHERE id = $1`,
+      `
+        SELECT kind, status,
+               observed_balance::text AS observed_balance,
+               observed_wallet_version
+        FROM wager_transaction WHERE id = $1
+      `,
       [result.transactionId],
     );
     expect(txs[0]).toMatchObject({ kind: 'BET', status: 'PROCESSED' });
+    expect(String(txs[0].observed_balance)).toContain('60');
+    expect(txs[0].observed_wallet_version).toBe(2);
 
     const ledger = await connection.query(
       `SELECT direction FROM wallet_ledger_entry WHERE transaction_id = $1`,
@@ -347,6 +358,117 @@ describe('PlaceBetUseCase (e2e postgres)', () => {
     await expect(
       failing.execute(betInput(playerId, wallet.id, '15.00')),
     ).rejects.toThrow('falha forçada após ledger');
+
+    const row = await connection.query(
+      `SELECT balance::text AS balance, version FROM wallet WHERE id = $1`,
+      [wallet.id],
+    );
+    expect(String(row[0].balance)).toContain('100');
+    expect(row[0].version).toBe(1);
+
+    const bets = await connection.query(
+      `SELECT id FROM wager_transaction WHERE wallet_id = $1 AND kind = 'BET'`,
+      [wallet.id],
+    );
+    expect(bets).toHaveLength(0);
+  });
+
+  it('replay após novo débito e sem outbox usa snapshot da wager_transaction', async () => {
+    const { playerId, wallet } = await seedWallet('100.00');
+    const input = betInput(playerId, wallet.id, '25.00');
+    const first = await placeBet.execute(input);
+
+    await placeBet.execute(betInput(playerId, wallet.id, '10.00'));
+
+    await connection.query(
+      `DELETE FROM outbox_message WHERE aggregate_id = $1::uuid`,
+      [first.transactionId],
+    );
+    await connection.query(
+      `
+        DELETE FROM outbox_message
+        WHERE event_type = 'WalletBalanceChanged'
+          AND payload->'data'->>'transactionId' = $1::text
+      `,
+      [first.transactionId],
+    );
+
+    const replay = await placeBet.execute(input);
+    expect(replay.transactionId).toBe(first.transactionId);
+    expect(replay.observedBalance).toBe(first.observedBalance);
+    expect(replay.observedBalance).toBe('75.00');
+    expect(replay.walletVersion).toBe(first.walletVersion);
+    expect(replay.walletVersion).toBe(2);
+
+    const row = await connection.query(
+      `SELECT balance::text AS balance FROM wallet WHERE id = $1`,
+      [wallet.id],
+    );
+    expect(String(row[0].balance)).toContain('65');
+  });
+
+  it('replay de BET legada sem snapshot falha explicitamente', async () => {
+    const { playerId, wallet } = await seedWallet('100.00');
+    const input = betInput(playerId, wallet.id, '15.00');
+    const payloadHash = computeBetPayloadHash({
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: '15.00',
+      currency: 'BRL',
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      kind: 'BET',
+    });
+
+    await connection.query(
+      `
+        INSERT INTO wager_transaction (
+          id, wallet_id, player_id, kind, status, amount, currency,
+          provider_id, external_transaction_id, idempotency_key, payload_hash,
+          round_id, game_id, failure_code,
+          observed_balance, observed_wallet_version
+        ) VALUES (
+          $1, $2, $3, 'BET', 'PROCESSED', 15.0000, 'BRL',
+          $4, $5, $6, $7,
+          $8, $9, NULL,
+          NULL, NULL
+        )
+      `,
+      [
+        randomUUID(),
+        wallet.id,
+        playerId,
+        input.providerId,
+        input.externalTransactionId,
+        input.idempotencyKey,
+        payloadHash,
+        input.roundId,
+        input.gameId,
+      ],
+    );
+
+    await expect(placeBet.execute(input)).rejects.toBeInstanceOf(
+      TerminalTransactionSnapshotMissingError,
+    );
+  });
+
+  it('falha ao persistir wager (snapshot): rollback sem efeitos', async () => {
+    const { playerId, wallet } = await seedWallet('100.00');
+    const failing = new PlaceBetUseCase({
+      run: async (work) =>
+        new TypeOrmUnitOfWork(connection).run(async (repos) => {
+          repos.wagerTransactions.save = async () => {
+            throw new Error('falha forçada ao persistir snapshot');
+          };
+          return work(repos);
+        }),
+    });
+
+    await expect(
+      failing.execute(betInput(playerId, wallet.id, '12.00')),
+    ).rejects.toThrow('falha forçada ao persistir snapshot');
 
     const row = await connection.query(
       `SELECT balance::text AS balance, version FROM wallet WHERE id = $1`,
