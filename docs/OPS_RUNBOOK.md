@@ -21,8 +21,8 @@ Documentos relacionados:
 | Inbound FIFO | `jungle-wager-transactions.fifo` |
 | Inbound DLQ | `jungle-wager-transactions-dlq.fifo` |
 | URLs no `.env.example` | `SQS_*_QUEUE_URL` / `SQS_*_DLQ_URL` |
-| `maxReceiveCount` efetivo (LocalStack) | **`5` hardcoded** em `docker/localstack/init-sqs.sh` (RedrivePolicy) |
-| `SQS_MAX_RECEIVE_COUNT` | Env / `sqsEnv` (testes que recriam atributos); **não** altera fila já criada pelo init |
+| `SQS_MAX_RECEIVE_COUNT` | Fonte única (default **5**): Compose → LocalStack `init-sqs.sh` + `sqsEnv` na app |
+| Redrive efetivo | `set-queue-attributes` no init (idempotente; atualiza fila já existente) |
 | Visibility | `30s` (`SQS_VISIBILITY_TIMEOUT_SECONDS`) |
 | Outbox lease | `OUTBOX_CLAIM_LEASE_SECONDS` (default 60) |
 | Clear Outbox | `bun run ops:clear-outbox-intervention -- <uuid>` |
@@ -228,7 +228,7 @@ Resumo:
 | Outbox lease | `locked_until` | Claim define lease (`OUTBOX_CLAIM_LEASE_SECONDS`); crash → outra instância após expirar |
 | Outbox intervenção | `intervention_required_at` | Pausa só com coluna preenchida (após falha de publish + attempts ≥ 10); claim exclui essas linhas |
 | SQS visibility | fila | Default 30s; falha de consumer pode usar `ChangeMessageVisibility(0)` para redelivery rápida |
-| SQS → DLQ | redrive | Após `maxReceiveCount` **5** do `init-sqs.sh` (não o env sozinho em fila já criada) |
+| SQS → DLQ | redrive | Após `SQS_MAX_RECEIVE_COUNT` (default 5) aplicado pelo init nas filas principais |
 | Inbox | `(consumer_name, message_id)` | Redelivery não reaplica efeito se já commitou |
 | Pending backoff | `pending_attempt_count` | defer; TTL 24h prevalece |
 

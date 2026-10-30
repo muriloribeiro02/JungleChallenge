@@ -405,7 +405,7 @@ async function ensureInboundFifo(client: SQSClient): Promise<void> {
       Attributes: {
         RedrivePolicy: JSON.stringify({
           deadLetterTargetArn: dlqArn,
-          maxReceiveCount: '5',
+          maxReceiveCount: String(sqsEnv.maxReceiveCount),
         }),
       },
     }),

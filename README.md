@@ -39,7 +39,7 @@ Variáveis principais (ver `.env.example`):
 | `SQS_INBOUND_DLQ_URL` | `…/jungle-wager-transactions-dlq.fifo` | DLQ inbound |
 | `WORKERS_ENABLED` | `false` no `.env` local; `true` nos `app-*` | Loops Outbox/Inbox/Inbound/Pending |
 | `OUTBOX_CLAIM_LEASE_SECONDS` | `60` | Lease do claim Outbox |
-| `SQS_MAX_RECEIVE_COUNT` | `5` | Usado em `sqsEnv`/testes; redrive **efetivo** LocalStack = `5` no `init-sqs.sh` (não altera fila já criada) |
+| `SQS_MAX_RECEIVE_COUNT` | `5` | Fonte única: `sqsEnv` + RedrivePolicy no `init-sqs.sh` (Compose injeta no LocalStack; `set-queue-attributes` atualiza fila existente) |
 
 ## Subir a infraestrutura
 

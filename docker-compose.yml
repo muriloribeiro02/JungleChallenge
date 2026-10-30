@@ -62,6 +62,8 @@ services:
       SERVICES: sqs
       DEBUG: "0"
       AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      # Fonte única com a app (`sqsEnv.maxReceiveCount`) — usada por init-sqs.sh
+      SQS_MAX_RECEIVE_COUNT: ${SQS_MAX_RECEIVE_COUNT:-5}
     volumes:
       - localstack_data:/var/lib/localstack
       - ./docker/localstack/init-sqs.sh:/etc/localstack/init/ready.d/init-sqs.sh

@@ -549,8 +549,10 @@ Por processo (`MessagingWorkersHost`): Outbox publish, Inbox domain events, Inbo
 
 ### Redrive SQS (LocalStack)
 
-- Valor **efetivo** nas filas criadas pelo init: `maxReceiveCount = 5` **hardcoded** em `docker/localstack/init-sqs.sh`.
-- `SQS_MAX_RECEIVE_COUNT` no `.env` alimenta `sqsEnv` (uso em testes que recriam atributos); **não** altera automaticamente uma fila já criada pelo init.
+- Fonte única: `SQS_MAX_RECEIVE_COUNT` (default **5**).
+- Compose injeta a var no serviço `localstack` e nos `app-*`.
+- `docker/localstack/init-sqs.sh` lê a var e aplica RedrivePolicy nas filas **principais** via `set-queue-attributes` (idempotente; atualiza fila já existente). DLQs **sem** redrive.
+- App: `sqsEnv.maxReceiveCount` (mesma env).
 
 ### Prometheus (D)
 

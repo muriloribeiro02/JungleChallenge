@@ -102,6 +102,7 @@ test/
   infrastructure/
     typeorm-sqs-dependency-health.spec.ts # unit: PG/SQS via checkAvailable; nunca chama receive
     sqs-message-bus.check-available.spec.ts # unit: GetQueueAttributes QueueArn ok/falha
+    init-sqs.redrive.spec.ts              # unit: contrato init-sqs.sh + SQS_MAX_RECEIVE_COUNT
   shared/
     money-limits.spec.ts                  # unit: isMoneyAmountWithinMaxAbs
   messaging/
@@ -110,6 +111,7 @@ test/
     messaging.migration.spec.ts           # unit: SQL 009/010
     messaging.sqs.e2e-spec.ts             # e2e: PG + LocalStack SQS (publish/claim/DLQ/inbox)
                                           # wiring via UnitOfWork + composition helpers
+    init-sqs-redrive.e2e-spec.ts          # e2e: RedrivePolicy = SQS_MAX_RECEIVE_COUNT; idempotente; DLQ sem redrive
   wallet/
     reconcile-wallet.use-case.spec.ts     # unit: reconciliação saldo×ledger
   wager/
@@ -174,6 +176,8 @@ test/
 | `api/health.controller.spec.ts` | unit | live/ready via porta (sem TypeORM/SQS) |
 | `infrastructure/typeorm-sqs-dependency-health.spec.ts` | unit | adapter: `checkAvailable` (não `receive`); PG/SQS fail |
 | `infrastructure/sqs-message-bus.check-available.spec.ts` | unit | `GetQueueAttributes` QueueArn; rejeita sem ARN / SDK error |
+| `infrastructure/init-sqs.redrive.spec.ts` | unit | init-sqs.sh: `SQS_MAX_RECEIVE_COUNT`, set-queue-attributes, sem literal 5 |
+| `messaging/init-sqs-redrive.e2e-spec.ts` | e2e | Redrive = `sqsEnv.maxReceiveCount`; idempotente; atualiza policy antiga; DLQ sem redrive |
 | `api/health.e2e-spec.ts` | e2e | ready 200/503; spy sem `receive`; NotVisible estável após probes; live stopping |
 | `api/http.api.e2e-spec.ts` | e2e | REST §9; 202; race REFUND×ROLLBACK HTTP 200+REJECTED; saldo/ledger/reconciliação; 404; 409; magnitude 400 |
 | `money/money.spec.ts` | unit | `from`/`fromPersisted`; magnitude em add/subtract/negate (MAX±); moeda; negativos internos |
