@@ -81,6 +81,136 @@ describe('HTTP API (e2e)', () => {
     await request(app.getHttpServer()).get('/health/live').expect(200);
   });
 
+  it('wallet inexistente → 404 (GET, ledger, reconciliation, REFUND/ROLLBACK)', async () => {
+    const missingWalletId = randomUUID();
+    const playerId = randomUUID();
+
+    const getWallet = await request(app.getHttpServer())
+      .get(`/wallets/${missingWalletId}`)
+      .expect(404);
+    expect(getWallet.body).toMatchObject({
+      statusCode: 404,
+      error: 'WalletNotFoundError',
+    });
+
+    const ledger = await request(app.getHttpServer())
+      .get(`/wallets/${missingWalletId}/ledger?limit=10`)
+      .expect(404);
+    expect(ledger.body).toMatchObject({
+      statusCode: 404,
+      error: 'WalletNotFoundError',
+    });
+
+    const recon = await request(app.getHttpServer())
+      .post(`/wallets/${missingWalletId}/reconciliation`)
+      .expect(404);
+    expect(recon.body).toMatchObject({
+      statusCode: 404,
+      error: 'WalletNotFoundError',
+    });
+
+    const refund = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', `provider-http:${randomUUID()}`)
+      .send({
+        providerId: 'provider-http',
+        externalTransactionId: randomUUID(),
+        playerId,
+        walletId: missingWalletId,
+        roundId: 'r1',
+        gameId: 'g1',
+        kind: 'REFUND',
+        money: { amount: '1.00', currency: 'BRL' },
+        referenceExternalTransactionId: randomUUID(),
+      })
+      .expect(404);
+    expect(refund.body.error).toBe('WalletNotFoundForRefundError');
+
+    const rollback = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', `provider-http:${randomUUID()}`)
+      .send({
+        providerId: 'provider-http',
+        externalTransactionId: randomUUID(),
+        playerId,
+        walletId: missingWalletId,
+        roundId: 'r1',
+        gameId: 'g1',
+        kind: 'ROLLBACK',
+        money: { amount: '1.00', currency: 'BRL' },
+        referenceExternalTransactionId: randomUUID(),
+      })
+      .expect(404);
+    expect(rollback.body.error).toBe('WalletNotFoundForRollbackError');
+  });
+
+  it('transação inexistente → 404 (por id e por provider/external)', async () => {
+    const missingTxId = randomUUID();
+    const byId = await request(app.getHttpServer())
+      .get(`/wagering/transactions/${missingTxId}`)
+      .expect(404);
+    expect(byId.body).toMatchObject({
+      statusCode: 404,
+      error: 'WagerTransactionNotFoundError',
+    });
+
+    const byExt = await request(app.getHttpServer())
+      .get(
+        `/providers/provider-http/wagering/transactions/${randomUUID()}`,
+      )
+      .expect(404);
+    expect(byExt.body).toMatchObject({
+      statusCode: 404,
+      error: 'WagerTransactionNotFoundError',
+    });
+  });
+
+  it('externalTransactionId duplicado em WIN → 409', async () => {
+    const playerId = randomUUID();
+    const wallet = await request(app.getHttpServer())
+      .post('/wallets')
+      .send({
+        playerId,
+        initialBalance: { amount: '100.00', currency: 'BRL' },
+      })
+      .expect(201);
+    createdWalletIds.push(wallet.body.id);
+
+    const sharedExt = randomUUID();
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', `provider-http:${sharedExt}`)
+      .send({
+        providerId: 'provider-http',
+        externalTransactionId: sharedExt,
+        playerId,
+        walletId: wallet.body.id,
+        roundId: 'r1',
+        gameId: 'g1',
+        kind: 'BET',
+        money: { amount: '10.00', currency: 'BRL' },
+      })
+      .expect(200);
+
+    // Submit repropaga ExternalTransactionIdConflictError (409); wrappers
+    // ForWin/ForLoss/… são cobertos no unitário do filtro.
+    const conflict = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', `provider-http:win-${sharedExt}`)
+      .send({
+        providerId: 'provider-http',
+        externalTransactionId: sharedExt,
+        playerId,
+        walletId: wallet.body.id,
+        roundId: 'r1',
+        gameId: 'g1',
+        kind: 'WIN',
+        money: { amount: '5.00', currency: 'BRL' },
+      })
+      .expect(409);
+    expect(conflict.body.error).toBe('ExternalTransactionIdConflictError');
+  });
+
   it('POST /wallets cria wallet e GET consulta saldo string', async () => {
     const playerId = randomUUID();
     const create = await request(app.getHttpServer())
@@ -197,7 +327,7 @@ describe('HTTP API (e2e)', () => {
     expect(String(bal[0].b)).toContain('30');
   });
 
-  it('sem Idempotency-Key → 400; amount number → 400', async () => {
+  it('sem Idempotency-Key → 400; amount number → 400; magnitude excessiva → 400', async () => {
     await request(app.getHttpServer())
       .post('/wagering/transactions')
       .send({
@@ -219,6 +349,87 @@ describe('HTTP API (e2e)', () => {
         initialBalance: { amount: 100, currency: 'BRL' },
       })
       .expect(400);
+
+    await request(app.getHttpServer())
+      .post('/wallets')
+      .send({
+        playerId: randomUUID(),
+        initialBalance: {
+          amount: '100000000000000000.00',
+          currency: 'BRL',
+        },
+      })
+      .expect(400);
+  });
+
+  it('REFUND com referência ausente → 202 PENDING_REFERENCE sem efeito financeiro', async () => {
+    const playerId = randomUUID();
+    const wallet = await request(app.getHttpServer())
+      .post('/wallets')
+      .send({
+        playerId,
+        initialBalance: { amount: '100.00', currency: 'BRL' },
+      })
+      .expect(201);
+    createdWalletIds.push(wallet.body.id);
+
+    const missingRef = randomUUID();
+    const ext = randomUUID();
+    const pending = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', `provider-http:${ext}`)
+      .send({
+        providerId: 'provider-http',
+        externalTransactionId: ext,
+        playerId,
+        walletId: wallet.body.id,
+        roundId: 'r1',
+        gameId: 'g1',
+        kind: 'REFUND',
+        money: { amount: '10.00', currency: 'BRL' },
+        referenceExternalTransactionId: missingRef,
+      })
+      .expect(202);
+
+    expect(pending.body.status).toBe('PENDING_REFERENCE');
+    expect(pending.body.transactionId).toBeTruthy();
+    expect(pending.body.balance).toBeNull();
+    // PENDING_REFERENCE não carrega failureCode (REFERENCE_NOT_FOUND só após TTL).
+    expect(pending.body.failureCode).toBeUndefined();
+    expect(pending.body.idempotentReplay).toBe(false);
+
+    const bal = await dataSource.query(
+      `SELECT balance::text AS b, version FROM wallet WHERE id = $1`,
+      [wallet.body.id],
+    );
+    expect(String(bal[0].b)).toContain('100');
+    expect(bal[0].version).toBe(1);
+
+    const ledger = await dataSource.query(
+      `SELECT 1 FROM wallet_ledger_entry WHERE transaction_id = $1`,
+      [pending.body.transactionId],
+    );
+    expect(ledger).toHaveLength(0);
+
+    const tx = await dataSource.query(
+      `
+        SELECT status, external_reference, failure_code, observed_balance
+        FROM wager_transaction WHERE id = $1
+      `,
+      [pending.body.transactionId],
+    );
+    expect(tx[0].status).toBe('PENDING_REFERENCE');
+    expect(tx[0].external_reference).toBe(missingRef);
+    expect(tx[0].failure_code).toBeNull();
+    expect(tx[0].observed_balance).toBeNull();
+
+    const outbox = await dataSource.query(
+      `SELECT event_type FROM outbox_message WHERE aggregate_id = $1`,
+      [pending.body.transactionId],
+    );
+    expect(outbox.map((r: { event_type: string }) => r.event_type)).toEqual([
+      'WagerTransactionPendingReference',
+    ]);
   });
 
   it('reconciliação e consultas de ledger/transação', async () => {

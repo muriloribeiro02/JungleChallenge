@@ -16,6 +16,7 @@ import { UniqueAnyProcessedReversalPerReference1761690010000 } from '../../src/i
 import { InboxConsumerNameAndMessageId1761690011000 } from '../../src/infrastructure/database/migrations/012-Inbox_consumer_name_and_message_id';
 import { PendingReferenceTtlAndClaim1793380707372 } from '../../src/infrastructure/database/migrations/1793380707372-PendingReferenceTtlAndClaim';
 import { AlignMonetaryNumericScaleNineteenTwo1793385791150 } from '../../src/infrastructure/database/migrations/1793385791150-AlignMonetaryNumericScaleNineteenTwo';
+import { OutboxInterventionFields1793389000000 } from '../../src/infrastructure/database/migrations/1793389000000-OutboxInterventionFields';
 
 describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
   let dataSource: DataSource;
@@ -33,6 +34,7 @@ describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
   const migration013Name = new PendingReferenceTtlAndClaim1793380707372().name;
   const migration014Name =
     new AlignMonetaryNumericScaleNineteenTwo1793385791150().name;
+  const migration015Name = new OutboxInterventionFields1793389000000().name;
 
   async function columnExists(columnName: string): Promise<boolean> {
     const client = createDbClient();
@@ -111,6 +113,7 @@ describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
       migration012Name,
       migration013Name,
       migration014Name,
+      migration015Name,
     ]);
     expect(await columnExists('observed_balance')).toBe(true);
     expect(await columnExists('observed_wallet_version')).toBe(true);

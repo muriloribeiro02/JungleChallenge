@@ -28,6 +28,8 @@ describe('Prometheus scrape (3 instâncias)', () => {
         expect(res.status).toBe(200);
         const text = await res.text();
         expect(text).toContain('dwp_outbox_pending_events');
+        expect(text).toContain('dwp_outbox_intervention_required_events');
+        expect(text).toContain('dwp_outbox_high_attempt_events');
         return text;
       }),
     );

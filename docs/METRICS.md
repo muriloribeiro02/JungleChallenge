@@ -49,6 +49,8 @@ Label estável de baixa cardinalidade: `app_instance` (`INSTANCE_ID`). IDs de wa
 | `dwp_outbox_publish_lag_seconds` | Histogram | — | Lag `occurred_at` → publish |
 | `dwp_outbox_pending_events` | Gauge | — | Pendentes no PG (**cache ~10s**) |
 | `dwp_outbox_oldest_pending_age_seconds` | Gauge | — | Idade do mais antigo pendente (PG, cache) |
+| `dwp_outbox_intervention_required_events` | Gauge | — | Aguardando intervenção manual (PG, cache; **sem eventId**) |
+| `dwp_outbox_high_attempt_events` | Gauge | — | Unpublished com `attempts >= 10` (PG, cache) |
 | `dwp_sqs_dlq_approximate_messages` | Gauge | `queue` | `ApproximateNumberOfMessages` DLQ (SQS, cache; aproximado) |
 | `dwp_concurrency_lock_conflicts_total` | Counter | `kind` | `idempotency_key` \| `reference_reversed` |
 | `dwp_reconciliation_runs_total` | Counter | — | Execuções de reconcile |
@@ -70,6 +72,10 @@ sum(rate(dwp_messaging_messages_duplicate_total[5m])) by (consumer)
 
 # Outbox pending (máx entre instâncias; valor vem do mesmo PG)
 max(dwp_outbox_pending_events)
+
+# Outbox pausados / high attempts
+max(dwp_outbox_intervention_required_events)
+max(dwp_outbox_high_attempt_events)
 
 # Lag p95 de publicação
 histogram_quantile(0.95, sum(rate(dwp_outbox_publish_lag_seconds_bucket[5m])) by (le))

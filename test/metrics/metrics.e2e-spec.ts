@@ -75,6 +75,9 @@ describe('GET /metrics (e2e)', () => {
     expect(res.headers['content-type']).toMatch(/text\/plain/);
     expect(res.text).toContain('# HELP');
     expect(res.text).toContain('dwp_outbox_pending_events');
+    expect(res.text).toContain('dwp_outbox_intervention_required_events');
+    expect(res.text).toContain('dwp_outbox_high_attempt_events');
+
     expect(res.text).not.toMatch(/"amount"|balance\.amount|playerId=/);
   });
 

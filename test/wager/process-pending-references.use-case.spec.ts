@@ -113,6 +113,8 @@ class FakeOutbox implements OutboxMessageRepository {
   }
   async markPublished(): Promise<void> {}
   async markPublishFailed(): Promise<void> {}
+  async markInterventionRequired(): Promise<boolean> { return false; }
+  async clearIntervention(): Promise<boolean> { return false; }
 }
 
 describe('ProcessPendingReferencesUseCase (unit)', () => {

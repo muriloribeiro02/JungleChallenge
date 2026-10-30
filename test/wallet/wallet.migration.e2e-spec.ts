@@ -136,6 +136,7 @@ describe('wallet migrations (e2e ida e volta)', () => {
       'InboxConsumerNameAndMessageId1761690011000',
       'PendingReferenceTtlAndClaim1793380707372',
       'AlignMonetaryNumericScaleNineteenTwo1793385791150',
+      'OutboxInterventionFields1793389000000',
     ]);
     expect(await tableExists('wallet')).toBe(true);
     expect(await tableExists('wager_transaction')).toBe(true);

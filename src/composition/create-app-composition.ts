@@ -3,6 +3,7 @@ import { DomainEventHandler } from '../application/messaging/domain-event-handle
 import { InboundWagerConsumer } from '../application/messaging/inbound-wager-consumer';
 import { InboxConsumer } from '../application/messaging/inbox-consumer';
 import { OutboxPublisher } from '../application/messaging/outbox-publisher';
+import type { DependencyHealthPort } from '../application/ports/dependency-health';
 import type { MessageBus } from '../application/ports/message-bus';
 import type {
   MetricsExposition,
@@ -10,6 +11,7 @@ import type {
 } from '../application/ports/metrics';
 import type { MessagingLogger } from '../application/ports/messaging-logger';
 import type { UnitOfWork } from '../application/ports/unit-of-work';
+import { TypeOrmSqsDependencyHealth } from '../infrastructure/health/typeorm-sqs-dependency-health';
 import { GetWalletUseCase } from '../application/use-cases/wallet/get-wallet.use-case';
 import { GetWalletBalanceUseCase } from '../application/use-cases/wallet/get-wallet-balance.use-case';
 import { ListWalletLedgerUseCase } from '../application/use-cases/wallet/list-wallet-ledger.use-case';
@@ -23,6 +25,7 @@ import { ReprocessPendingReferencesUseCase } from '../application/use-cases/wage
 import { RollbackWagerUseCase } from '../application/use-cases/wager/rollback-wager.use-case';
 import { SettleLossUseCase } from '../application/use-cases/wager/settle-loss.use-case';
 import { SettleWinUseCase } from '../application/use-cases/wager/settle-win.use-case';
+import { ClearOutboxInterventionUseCase } from '../application/use-cases/outbox/clear-outbox-intervention.use-case';
 import { SubmitWagerTransactionUseCase } from '../application/use-cases/wager/submit-wager-transaction.use-case';
 import { ConsoleMessagingLogger } from '../infrastructure/logging/console-messaging-logger';
 import { createPrometheusMetrics } from '../infrastructure/metrics/prometheus-metrics';
@@ -36,6 +39,7 @@ export type AppComposition = {
   dataSource: DataSource;
   unitOfWork: UnitOfWork;
   messageBus: MessageBus;
+  dependencyHealth: DependencyHealthPort;
   logger: MessagingLogger;
   metrics: MetricsPort;
   metricsExposition: MetricsExposition;
@@ -53,6 +57,7 @@ export type AppComposition = {
   processPendingReferences: ProcessPendingReferencesUseCase;
   submitWagerTransaction: SubmitWagerTransactionUseCase;
   getWagerTransaction: GetWagerTransactionUseCase;
+  clearOutboxIntervention: ClearOutboxInterventionUseCase;
   domainEventHandler: DomainEventHandler;
   outboxPublisher: OutboxPublisher;
   inboxConsumer: InboxConsumer;
@@ -68,6 +73,10 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
   const unitOfWork = new TypeOrmUnitOfWork(dataSource);
   const messageBus = SqsMessageBus.fromEnv(sqsEnv.mainQueueUrl);
   const inboundMessageBus = SqsMessageBus.fromEnv(sqsEnv.inboundQueueUrl);
+  const dependencyHealth = new TypeOrmSqsDependencyHealth(
+    dataSource,
+    messageBus,
+  );
   const logger = new ConsoleMessagingLogger();
   const prom = createPrometheusMetrics({ dataSource });
   const metrics: MetricsPort = prom;
@@ -111,6 +120,10 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
     metrics,
   );
   const getWagerTransaction = new GetWagerTransactionUseCase(unitOfWork);
+  const clearOutboxIntervention = new ClearOutboxInterventionUseCase(
+    unitOfWork,
+    logger,
+  );
   const domainEventHandler = new DomainEventHandler(reprocessPending);
 
   const outboxPublisher = new OutboxPublisher(
@@ -152,6 +165,7 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
     dataSource,
     unitOfWork,
     messageBus,
+    dependencyHealth,
     inboundMessageBus,
     logger,
     metrics,
@@ -170,6 +184,7 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
     processPendingReferences,
     submitWagerTransaction,
     getWagerTransaction,
+    clearOutboxIntervention,
     domainEventHandler,
     outboxPublisher,
     inboxConsumer,

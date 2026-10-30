@@ -28,4 +28,13 @@ export class OutboxMessageOrmEntity {
 
   @Column({ name: 'locked_until', type: 'timestamptz', nullable: true })
   lockedUntil!: Date | null;
+
+  @Column({ name: 'last_error', type: 'text', nullable: true })
+  lastError!: string | null;
+
+  @Column({ name: 'last_failed_at', type: 'timestamptz', nullable: true })
+  lastFailedAt!: Date | null;
+
+  @Column({ name: 'intervention_required_at', type: 'timestamptz', nullable: true })
+  interventionRequiredAt!: Date | null;
 }

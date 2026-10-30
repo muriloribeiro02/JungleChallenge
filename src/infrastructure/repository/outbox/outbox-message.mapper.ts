@@ -14,6 +14,9 @@ export class OutboxMessageMapper {
     row.nextAttemptAt = message.nextAttemptAt;
     row.publishedAt = message.publishedAt;
     row.lockedUntil = message.lockedUntil;
+    row.lastError = message.lastError;
+    row.lastFailedAt = message.lastFailedAt;
+    row.interventionRequiredAt = message.interventionRequiredAt;
     return row;
   }
 
@@ -28,6 +31,9 @@ export class OutboxMessageMapper {
       nextAttemptAt: row.nextAttemptAt,
       publishedAt: row.publishedAt,
       lockedUntil: row.lockedUntil ?? null,
+      lastError: row.lastError ?? null,
+      lastFailedAt: row.lastFailedAt ?? null,
+      interventionRequiredAt: row.interventionRequiredAt ?? null,
     });
   }
 }

@@ -216,7 +216,12 @@ export function createPrometheusMetrics(
     ttlMs,
     async () => {
       if (!dataSource?.isInitialized) {
-        return { count: 0, oldestAgeSeconds: 0 };
+        return {
+          count: 0,
+          oldestAgeSeconds: 0,
+          interventionRequired: 0,
+          highAttempts: 0,
+        };
       }
       const rows = (await dataSource.query(
         `SELECT
@@ -224,17 +229,40 @@ export function createPrometheusMetrics(
            COALESCE(
              EXTRACT(EPOCH FROM (NOW() - MIN(occurred_at))),
              0
-           )::float AS oldest_age_seconds
+           )::float AS oldest_age_seconds,
+           COUNT(*) FILTER (
+             WHERE intervention_required_at IS NOT NULL
+           )::int AS intervention_required,
+           COUNT(*) FILTER (
+             WHERE attempts >= 10
+           )::int AS high_attempts
          FROM outbox_message
          WHERE published_at IS NULL`,
-      )) as Array<{ count: number; oldest_age_seconds: number }>;
-      const row = rows[0] ?? { count: 0, oldest_age_seconds: 0 };
+      )) as Array<{
+        count: number;
+        oldest_age_seconds: number;
+        intervention_required: number;
+        high_attempts: number;
+      }>;
+      const row = rows[0] ?? {
+        count: 0,
+        oldest_age_seconds: 0,
+        intervention_required: 0,
+        high_attempts: 0,
+      };
       return {
         count: Number(row.count) || 0,
         oldestAgeSeconds: Number(row.oldest_age_seconds) || 0,
+        interventionRequired: Number(row.intervention_required) || 0,
+        highAttempts: Number(row.high_attempts) || 0,
       };
     },
-    { count: 0, oldestAgeSeconds: 0 },
+    {
+      count: 0,
+      oldestAgeSeconds: 0,
+      interventionRequired: 0,
+      highAttempts: 0,
+    },
   );
 
   const dlqCache = new CachedValue(
@@ -269,6 +297,26 @@ export function createPrometheusMetrics(
     },
   });
 
+  const outboxInterventionGauge = new Gauge({
+    name: 'dwp_outbox_intervention_required_events',
+    help: 'Eventos outbox aguardando intervenção manual (PG, cacheado; sem eventId)',
+    registers: [registry],
+    async collect() {
+      const v = await pendingOutboxCache.get();
+      this.set(v.interventionRequired);
+    },
+  });
+
+  const outboxHighAttemptGauge = new Gauge({
+    name: 'dwp_outbox_high_attempt_events',
+    help: 'Eventos outbox não publicados com attempts >= 10 (PG, cacheado; sem eventId)',
+    registers: [registry],
+    async collect() {
+      const v = await pendingOutboxCache.get();
+      this.set(v.highAttempts);
+    },
+  });
+
   const dlqGauge = new Gauge({
     name: 'dwp_sqs_dlq_approximate_messages',
     help: 'ApproximateNumberOfMessages nas DLQs SQS (aproximado; NaN se indisponível)',
@@ -288,6 +336,8 @@ export function createPrometheusMetrics(
   // Referências evitam tree-shake / unused em builds estritos
   void outboxPendingGauge;
   void outboxOldestGauge;
+  void outboxInterventionGauge;
+  void outboxHighAttemptGauge;
   void dlqGauge;
 
   const raw: MetricsPort = {

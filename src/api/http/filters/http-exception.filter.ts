@@ -25,14 +25,24 @@ import {
   WalletNotFoundForBetError,
   WalletPlayerMismatchError,
 } from '../../../application/use-cases/wager/place-bet.errors';
-import { IdempotencyPayloadConflictForRefundError } from '../../../application/use-cases/wager/refund-wager.errors';
-import { IdempotencyPayloadConflictForRollbackError } from '../../../application/use-cases/wager/rollback-wager.errors';
 import {
+  ExternalTransactionConflictForRefundError,
+  IdempotencyPayloadConflictForRefundError,
+  WalletNotFoundForRefundError,
+} from '../../../application/use-cases/wager/refund-wager.errors';
+import {
+  ExternalTransactionConflictForRollbackError,
+  IdempotencyPayloadConflictForRollbackError,
+  WalletNotFoundForRollbackError,
+} from '../../../application/use-cases/wager/rollback-wager.errors';
+import {
+  ExternalTransactionConflictForWinError,
   IdempotencyPayloadConflictForWinError,
   InvalidSettleWinInputError,
   WalletNotFoundForWinError,
 } from '../../../application/use-cases/wager/settle-win.errors';
 import {
+  ExternalTransactionConflictForLossError,
   IdempotencyPayloadConflictForLossError,
   InvalidSettleLossInputError,
   WalletNotFoundForLossError,
@@ -42,6 +52,48 @@ import { InvalidOpenWalletInputError } from '../../../application/use-cases/wall
 import { InvalidListWalletLedgerInputError } from '../../../application/use-cases/wallet/list-wallet-ledger.errors';
 import { InvalidReconcileWalletInputError } from '../../../application/use-cases/wallet/reconcile-wallet.errors';
 import { InvalidMoneyError } from '../../../domain/money/money.errors';
+
+type ErrorConstructor = abstract new (...args: never[]) => Error;
+
+const CONFLICT_ERRORS: readonly ErrorConstructor[] = [
+  WalletAlreadyExistsError,
+  IdempotencyKeyConflictError,
+  IdempotencyPayloadConflictError,
+  IdempotencyPayloadConflictForWinError,
+  IdempotencyPayloadConflictForLossError,
+  IdempotencyPayloadConflictForRefundError,
+  IdempotencyPayloadConflictForRollbackError,
+  ExternalTransactionIdConflictError,
+  ExternalTransactionConflictError,
+  ExternalTransactionConflictForWinError,
+  ExternalTransactionConflictForLossError,
+  ExternalTransactionConflictForRefundError,
+  ExternalTransactionConflictForRollbackError,
+  ReferenceAlreadyReversedConflictError,
+];
+
+const NOT_FOUND_ERRORS: readonly ErrorConstructor[] = [
+  WalletNotFoundError,
+  WalletNotFoundForBetError,
+  WalletNotFoundForWinError,
+  WalletNotFoundForLossError,
+  WalletNotFoundForRefundError,
+  WalletNotFoundForRollbackError,
+  WagerTransactionNotFoundError,
+];
+
+const BAD_REQUEST_ERRORS: readonly ErrorConstructor[] = [
+  InvalidOpenWalletInputError,
+  InvalidPlaceBetInputError,
+  InvalidSettleWinInputError,
+  InvalidSettleLossInputError,
+  InvalidSubmitWagerInputError,
+  InvalidListWalletLedgerInputError,
+  InvalidReconcileWalletInputError,
+  InvalidMoneyError,
+  WalletCurrencyMismatchForBetError,
+  WalletPlayerMismatchError,
+];
 
 /**
  * Mapeamento HTTP (decisão de implementação — contrato exige distinção clara):
@@ -73,7 +125,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
       return;
     }
 
-    const mapped = mapError(exception);
+    const mapped = mapHttpError(exception);
     if (mapped.status >= 500) {
       this.logger.error(
         exception instanceof Error ? exception.message : String(exception),
@@ -88,23 +140,20 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
   }
 }
 
-function mapError(exception: unknown): {
+function isOneOf(
+  exception: unknown,
+  constructors: readonly ErrorConstructor[],
+): exception is Error {
+  return constructors.some((Ctor) => exception instanceof Ctor);
+}
+
+/** Exportado para testes unitários do mapeamento. */
+export function mapHttpError(exception: unknown): {
   status: number;
   code: string;
   message: string;
 } {
-  if (
-    exception instanceof WalletAlreadyExistsError ||
-    exception instanceof IdempotencyKeyConflictError ||
-    exception instanceof IdempotencyPayloadConflictError ||
-    exception instanceof IdempotencyPayloadConflictForWinError ||
-    exception instanceof IdempotencyPayloadConflictForLossError ||
-    exception instanceof IdempotencyPayloadConflictForRefundError ||
-    exception instanceof IdempotencyPayloadConflictForRollbackError ||
-    exception instanceof ExternalTransactionIdConflictError ||
-    exception instanceof ExternalTransactionConflictError ||
-    exception instanceof ReferenceAlreadyReversedConflictError
-  ) {
+  if (isOneOf(exception, CONFLICT_ERRORS)) {
     return {
       status: HttpStatus.CONFLICT,
       code: exception.name,
@@ -112,13 +161,7 @@ function mapError(exception: unknown): {
     };
   }
 
-  if (
-    exception instanceof WalletNotFoundError ||
-    exception instanceof WalletNotFoundForBetError ||
-    exception instanceof WalletNotFoundForWinError ||
-    exception instanceof WalletNotFoundForLossError ||
-    exception instanceof WagerTransactionNotFoundError
-  ) {
+  if (isOneOf(exception, NOT_FOUND_ERRORS)) {
     return {
       status: HttpStatus.NOT_FOUND,
       code: exception.name,
@@ -126,18 +169,7 @@ function mapError(exception: unknown): {
     };
   }
 
-  if (
-    exception instanceof InvalidOpenWalletInputError ||
-    exception instanceof InvalidPlaceBetInputError ||
-    exception instanceof InvalidSettleWinInputError ||
-    exception instanceof InvalidSettleLossInputError ||
-    exception instanceof InvalidSubmitWagerInputError ||
-    exception instanceof InvalidListWalletLedgerInputError ||
-    exception instanceof InvalidReconcileWalletInputError ||
-    exception instanceof InvalidMoneyError ||
-    exception instanceof WalletCurrencyMismatchForBetError ||
-    exception instanceof WalletPlayerMismatchError
-  ) {
+  if (isOneOf(exception, BAD_REQUEST_ERRORS)) {
     return {
       status: HttpStatus.BAD_REQUEST,
       code: exception.name,

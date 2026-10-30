@@ -17,6 +17,7 @@ Sempre documentar quando houver uma atualização em teste neste arquivo.
 | `test:messaging` | `bun run test:messaging` | E2E mensageria: Postgres + LocalStack SQS (`messaging.sqs`) |
 | `test:multi-instance` | `bun run test:multi-instance` | 3 containers `app-1..3` (HTTP + workers reais) |
 | `apps:up` / `apps:down` | `bun run apps:up` | Sobe/para app-1..3 |
+| `ops:clear-outbox-intervention` | `bun run ops:clear-outbox-intervention -- <uuid>` | CLI ops: libera outbox pausado (sem HTTP) |
 | (filtro) | `bun run test:e2e -- http.api` | E2E HTTP Nest + Postgres (supertest) |
 | (filtro) | `bun run test:unit -- metrics` | Unit métricas / instrumentação |
 | (filtro) | `bun run test:e2e -- metrics` | E2E `GET /metrics` + submit |
@@ -43,7 +44,10 @@ bun run test:unit -- pending-reference-lookup
 bun run test:unit -- wager-transaction
 bun run test:unit -- wallet-ledger-entry
 bun run test:unit -- outbox-message.migration
+bun run test:unit -- outbox-intervention
+bun run test:unit -- clear-outbox-intervention
 bun run test:unit -- wallet.migration
+bun run test:e2e -- outbox-intervention
 bun run test:e2e -- wallet.constraints
 bun run test:e2e -- open-wallet.use-case
 bun run test:e2e -- place-bet.use-case
@@ -70,7 +74,15 @@ test/
     metrics-instrumentation.spec.ts       # unit: Submit/Inbox/Outbox → métricas
     metrics.e2e-spec.ts                   # e2e: GET /metrics, BET, replay, reconcile
   api/
-    http.api.e2e-spec.ts                  # e2e: REST §9 (wallets, wagering, health, idempotência)
+    http.api.e2e-spec.ts                  # e2e: REST §9; 404; 202 PENDING_REFERENCE; magnitude 400
+    http-exception.filter.spec.ts         # unit: mapHttpError 404/409/400/500
+    money.dto.spec.ts                     # unit: MoneyDto escala + magnitude shared
+    health.controller.spec.ts             # unit: live/ready via DependencyHealthPort
+    health.e2e-spec.ts                    # e2e: ready 200/503; live stopping (spies no adapter)
+  infrastructure/
+    typeorm-sqs-dependency-health.spec.ts # unit: adapter PG/SQS isolado
+  shared/
+    money-limits.spec.ts                  # unit: isMoneyAmountWithinMaxAbs
   messaging/
     outbox-publisher.use-case.spec.ts     # unit: backoff / markPublished (ports)
     inbox-consumer.use-case.spec.ts       # unit: inbox, duplicata, fail sem ACK + visibility=0
@@ -85,7 +97,12 @@ test/
     money.spec.ts              # unit: precisão e moeda em Money.from
   outbox/
     outbox-message.migration.spec.ts      # unit: SQL up/down outbox
-    outbox-message.constraints.e2e-spec.ts # e2e: imutabilidade + campos operacionais
+    outbox-message.constraints.e2e-spec.ts # e2e: imutabilidade + campos operacionais (+ intervenção)
+    outbox-intervention.policy.spec.ts    # unit: limiar 10 + sanitize de erro
+    outbox-intervention.publisher.spec.ts # unit: retry vs pausa + log único
+    outbox-intervention.migration.spec.ts # unit: SQL up/down OutboxInterventionFields
+    clear-outbox-intervention.use-case.spec.ts # unit: clear preserva attempts/payload
+    outbox-intervention.e2e-spec.ts       # e2e: claim/pausa/clear/lease/SKIP LOCKED + migration up/down
   wager-transaction/
     wager-transaction.entity.spec.ts      # unit: OPENING/BET/REFUND/ROLLBACK + snapshot
     wager-transaction.mapper.spec.ts      # unit: ORM ↔ domínio + snapshot
@@ -128,6 +145,13 @@ test/
 
 | Arquivo | Tipo | Cobre |
 |---------|------|-------|
+| `api/http-exception.filter.spec.ts` | unit | `mapHttpError`: 404 refund/rollback; 409 conflitos For*; regressão 400/500 |
+| `api/money.dto.spec.ts` | unit | MoneyDto: limite, escala, formatos inválidos |
+| `shared/money-limits.spec.ts` | unit | magnitude NUMERIC(19,2) compartilhada |
+| `api/health.controller.spec.ts` | unit | live/ready via porta (sem TypeORM/SQS) |
+| `infrastructure/typeorm-sqs-dependency-health.spec.ts` | unit | adapter check PG/SQS; reusa MessageBus |
+| `api/health.e2e-spec.ts` | e2e | ready 200/503; live stopping (spies DataSource/MessageBus) |
+| `api/http.api.e2e-spec.ts` | e2e | REST §9; 202 PENDING_REFERENCE; 404; 409; magnitude 400 |
 | `money/money.spec.ts` | unit | `from`/`fromPersisted`; magnitude em add/subtract/negate (MAX±); moeda; negativos internos |
 | `money/align-monetary-scale.migration.spec.ts` | unit | SQL up/down `AlignMonetaryNumericScaleNineteenTwo` + abort se dados com >2 casas |
 | `wallet.entity.spec.ts` | unit | `open` / `rehydrate` / `credit` / `debit`: version, moeda, saldo |

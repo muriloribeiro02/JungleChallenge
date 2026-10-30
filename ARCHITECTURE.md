@@ -12,7 +12,7 @@
 
 **TypeORM** (aceitável pelo contrato). Transações via `TypeOrmUnitOfWork` + `SELECT FOR UPDATE` na wallet. `Money` persiste como **`numeric(19,2)`** + `currency` string, reidratado via `Money.fromPersisted` — nunca `number` no domínio. Escala 2 no Domain/API/ORM/PG (migration `AlignMonetaryNumericScaleNineteenTwo`).
 
-**Limitação PG:** `NUMERIC(19,2)` **arredonda** (não rejeita) entradas com >2 casas no INSERT/UPDATE. A rejeição obrigatória fica em `Money` / `MoneyDto`; o tipo no banco alinha armazenamento e magnitude (máx. `99999999999999999.99`), não substitui validação de aplicação.
+**Limitação PG:** `NUMERIC(19,2)` **arredonda** (não rejeita) entradas com >2 casas no INSERT/UPDATE. A rejeição obrigatória fica em `Money` / `MoneyDto`; o tipo no banco alinha armazenamento e magnitude (máx. `99999999999999999.99`), não substitui validação de aplicação. Constante/check de magnitude: `src/shared/money-limits.ts` (Domain + API, sem HTTP importar o VO).
 
 ## API HTTP (contrato §9)
 
@@ -26,7 +26,7 @@
 | GET | `/wagering/transactions/:transactionId` | 200 / 404 |
 | GET | `/providers/:providerId/wagering/transactions/:externalTransactionId` | 200 / 404 |
 | GET | `/health/live` | 200 |
-| GET | `/health/ready` | 200 / 503 |
+| GET | `/health/ready` | 200 / 503 (`DependencyHealthPort` → TypeORM + MessageBus) |
 | GET | `/metrics` | 200 (Prometheus text) |
 
 ### Status codes (decisão)
@@ -56,6 +56,8 @@ Header `Idempotency-Key` obrigatório em `POST /wagering/transactions`. Hash can
 ## Mensageria
 
 Outbox claim (`SKIP LOCKED`) → SQS; Inbox + ACK após commit. Filas locais via LocalStack (nomes do ambiente atual).
+
+**Intervenção (E2.3.5):** backoff `min(300, 2^attempts)`; a partir de **10 attempts** (incrementados no claim) o evento recebe `intervention_required_at` e deixa de ser claimável até `ClearOutboxInterventionUseCase` / `bun run ops:clear-outbox-intervention` (sem HTTP admin). Ver [`docs/OUTBOX_INTERVENTION_RUNBOOK.md`](docs/OUTBOX_INTERVENTION_RUNBOOK.md).
 
 ### Workers por processo (Fase B/C)
 

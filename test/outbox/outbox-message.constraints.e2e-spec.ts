@@ -110,4 +110,31 @@ describe('outbox_message constraints/triggers (postgres)', () => {
     expect(updated.rows[0].published_at).toEqual(publishedAt);
     expect(updated.rows[0].payload).toEqual(inserted.rows[0].payload);
   });
+
+  it('permite atualizar last_error, last_failed_at e intervention_required_at', async () => {
+    const inserted = await insertOutboxMessage(client);
+    const id = inserted.rows[0].id;
+    const failedAt = new Date('2026-10-30T12:10:00.000Z');
+    const interventionAt = new Date('2026-10-30T12:11:00.000Z');
+
+    const updated = await client.query(
+      `
+        UPDATE outbox_message
+        SET last_error = $1,
+            last_failed_at = $2,
+            intervention_required_at = $3,
+            locked_until = NULL
+        WHERE id = $4
+        RETURNING last_error, last_failed_at, intervention_required_at, payload
+      `,
+      ['sanitized-error', failedAt, interventionAt, id],
+    );
+
+    expect(updated.rowCount).toBe(1);
+    expect(updated.rows[0].last_error).toBe('sanitized-error');
+    expect(updated.rows[0].last_failed_at).toEqual(failedAt);
+    expect(updated.rows[0].intervention_required_at).toEqual(interventionAt);
+    expect(updated.rows[0].payload).toEqual(inserted.rows[0].payload);
+  });
 });
+

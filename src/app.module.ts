@@ -11,6 +11,7 @@ import {
   type AppComposition,
 } from './composition/create-app-composition';
 import { APP_COMPOSITION } from './composition/tokens';
+import { DEPENDENCY_HEALTH } from './application/ports/dependency-health';
 import dataSource from './infrastructure/database/data-source';
 import { MessagingWorkersHost } from './infrastructure/messaging/messaging-workers.host';
 import { GetWalletUseCase } from './application/use-cases/wallet/get-wallet.use-case';
@@ -38,10 +39,16 @@ import { SubmitWagerTransactionUseCase } from './application/use-cases/wager/sub
       },
     },
     {
+      provide: DEPENDENCY_HEALTH,
+      inject: [APP_COMPOSITION],
+      useFactory: (app: AppComposition) => app.dependencyHealth,
+    },
+    {
       provide: OpenWalletUseCase,
       inject: [APP_COMPOSITION],
       useFactory: (app: AppComposition) => app.openWallet,
     },
+
     {
       provide: GetWalletUseCase,
       inject: [APP_COMPOSITION],

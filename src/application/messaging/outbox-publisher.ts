@@ -1,8 +1,10 @@
 import type { OutboxMessage } from '../../domain/outbox/outbox-message.entity';
+import { shouldRequireOutboxIntervention } from '../../domain/outbox/outbox-intervention.policy';
 import type { MessageBus } from '../ports/message-bus';
 import { noopMetrics, type MetricsPort } from '../ports/metrics';
 import type { MessagingLogger } from '../ports/messaging-logger';
 import type { UnitOfWork } from '../ports/unit-of-work';
+import { sanitizeOperationalError } from './sanitize-operational-error';
 import { shutdownGate } from './shutdown-gate';
 import { applyShutdownTestHoldIfConfigured } from './shutdown-test-hold';
 
@@ -19,6 +21,11 @@ export type OutboxPublisherOptions = {
  * a Inbox no consumer evita efeitos duplicados.
  *
  * Decisão: backoff next_attempt_at = min(300, 2^attempts) segundos.
+ * A partir de 10 attempts (ver política), exige intervenção manual —
+ * sem descartar o evento e sem marcar published em falha.
+ *
+ * `attempts` é incrementado no claim e pode incluir claims abandonados
+ * (crash/shutdown), não apenas falhas confirmadas de publicação.
  */
 export class OutboxPublisher {
   constructor(
@@ -90,17 +97,46 @@ export class OutboxPublisher {
         });
       } catch (error) {
         failed += 1;
-        const nextAttemptAt = computeNextAttemptAt(message.attempts);
-        await this.markFailed(message.id, nextAttemptAt);
+        const sanitized = sanitizeOperationalError(error);
 
-        this.logger.error('outbox.publish_failed', {
-          eventId: message.id,
-          eventType: message.eventType,
-          attempts: message.attempts,
-          nextAttemptAt: nextAttemptAt.toISOString(),
-          error: error instanceof Error ? error.message : String(error),
-          correlationId,
-        });
+        if (shouldRequireOutboxIntervention(message.attempts)) {
+          const newlyRequired = await this.markInterventionRequired(
+            message.id,
+            sanitized,
+          );
+
+          this.logger.error('outbox.publish_failed', {
+            eventId: message.id,
+            eventType: message.eventType,
+            attempts: message.attempts,
+            interventionRequired: true,
+            error: sanitized,
+            correlationId,
+          });
+
+          if (newlyRequired) {
+            this.logger.error('outbox.intervention_required', {
+              eventId: message.id,
+              eventType: message.eventType,
+              attempts: message.attempts,
+              error: sanitized,
+              correlationId,
+            });
+          }
+        } else {
+          const nextAttemptAt = computeNextAttemptAt(message.attempts);
+          await this.markFailed(message.id, nextAttemptAt, sanitized);
+
+          this.logger.error('outbox.publish_failed', {
+            eventId: message.id,
+            eventType: message.eventType,
+            attempts: message.attempts,
+            nextAttemptAt: nextAttemptAt.toISOString(),
+            interventionRequired: false,
+            error: sanitized,
+            correlationId,
+          });
+        }
       }
     }
 
@@ -127,9 +163,22 @@ export class OutboxPublisher {
     await this.unitOfWork.run((repos) => repos.outboxMessages.markPublished(id));
   }
 
-  private async markFailed(id: string, nextAttemptAt: Date): Promise<void> {
+  private async markFailed(
+    id: string,
+    nextAttemptAt: Date,
+    lastError: string,
+  ): Promise<void> {
     await this.unitOfWork.run((repos) =>
-      repos.outboxMessages.markPublishFailed(id, nextAttemptAt),
+      repos.outboxMessages.markPublishFailed(id, nextAttemptAt, lastError),
+    );
+  }
+
+  private async markInterventionRequired(
+    id: string,
+    lastError: string,
+  ): Promise<boolean> {
+    return this.unitOfWork.run((repos) =>
+      repos.outboxMessages.markInterventionRequired(id, lastError),
     );
   }
 }

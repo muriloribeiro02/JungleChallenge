@@ -27,7 +27,8 @@
     "migration:create": "ts-node -P tsconfig.typeorm.json ./src/infrastructure/database/migration-create.ts",
     "migration:run": "docker compose --profile migrate run --rm migrate run",
     "migration:revert": "docker compose --profile migrate run --rm migrate revert",
-    "migration:show": "docker compose --profile migrate run --rm migrate show"
+    "migration:show": "docker compose --profile migrate run --rm migrate show",
+    "ops:clear-outbox-intervention": "ts-node -P tsconfig.typeorm.json ./src/infrastructure/ops/clear-outbox-intervention.cli.ts"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1160.0",

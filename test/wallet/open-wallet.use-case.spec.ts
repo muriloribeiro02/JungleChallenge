@@ -174,6 +174,8 @@ class InMemoryOutboxRepository implements OutboxMessageRepository {
   async markPublished(): Promise<void> {}
 
   async markPublishFailed(): Promise<void> {}
+  async markInterventionRequired(): Promise<boolean> { return false; }
+  async clearIntervention(): Promise<boolean> { return false; }
 }
 
 class InMemoryUnitOfWork implements UnitOfWork {

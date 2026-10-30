@@ -38,6 +38,7 @@ export class TypeOrmOutboxMessageRepository
           SELECT id
           FROM outbox_message
           WHERE published_at IS NULL
+            AND intervention_required_at IS NULL
             AND (locked_until IS NULL OR locked_until < NOW())
             AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
           ORDER BY occurred_at ASC
@@ -59,7 +60,10 @@ export class TypeOrmOutboxMessageRepository
           o.attempts,
           o.next_attempt_at AS "nextAttemptAt",
           o.published_at AS "publishedAt",
-          o.locked_until AS "lockedUntil"
+          o.locked_until AS "lockedUntil",
+          o.last_error AS "lastError",
+          o.last_failed_at AS "lastFailedAt",
+          o.intervention_required_at AS "interventionRequiredAt"
       `,
       [limit, leaseSeconds],
     );
@@ -77,6 +81,9 @@ export class TypeOrmOutboxMessageRepository
         nextAttemptAt: row.nextAttemptAt,
         publishedAt: row.publishedAt,
         lockedUntil: row.lockedUntil,
+        lastError: row.lastError ?? null,
+        lastFailedAt: row.lastFailedAt ?? null,
+        interventionRequiredAt: row.interventionRequiredAt ?? null,
       } as OutboxMessageOrmEntity),
     );
   }
@@ -94,16 +101,67 @@ export class TypeOrmOutboxMessageRepository
       .execute();
   }
 
-  async markPublishFailed(id: string, nextAttemptAt: Date): Promise<void> {
+  async markPublishFailed(
+    id: string,
+    nextAttemptAt: Date,
+    lastError: string | null = null,
+  ): Promise<void> {
     await this.messages
       .createQueryBuilder()
       .update(OutboxMessageOrmEntity)
       .set({
         lockedUntil: null,
         nextAttemptAt,
+        lastError,
+        lastFailedAt: new Date(),
       })
       .where('id = :id', { id })
       .execute();
+  }
+
+  async markInterventionRequired(
+    id: string,
+    lastError: string,
+  ): Promise<boolean> {
+    const em = this.manager ?? this.messages.manager;
+    const result: unknown = await em.query(
+      `
+        UPDATE outbox_message
+        SET
+          intervention_required_at = NOW(),
+          last_error = $2,
+          last_failed_at = NOW(),
+          locked_until = NULL
+        WHERE id = $1
+          AND published_at IS NULL
+          AND intervention_required_at IS NULL
+        RETURNING id
+      `,
+      [id, lastError],
+    );
+    return unwrapReturningRows(result).length > 0;
+  }
+
+  async clearIntervention(
+    id: string,
+    nextAttemptAt: Date = new Date(),
+  ): Promise<boolean> {
+    const em = this.manager ?? this.messages.manager;
+    const result: unknown = await em.query(
+      `
+        UPDATE outbox_message
+        SET
+          intervention_required_at = NULL,
+          next_attempt_at = $2,
+          locked_until = NULL
+        WHERE id = $1
+          AND published_at IS NULL
+          AND intervention_required_at IS NOT NULL
+        RETURNING id
+      `,
+      [id, nextAttemptAt],
+    );
+    return unwrapReturningRows(result).length > 0;
   }
 }
 

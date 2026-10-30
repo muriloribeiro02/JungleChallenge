@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import { MONEY_MAX_ABS_AMOUNT } from '../../shared/money-limits';
 import { CurrencyMismatchError, InvalidMoneyError } from './money.errors';
 
 export interface MoneyProps {
@@ -6,14 +7,11 @@ export interface MoneyProps {
   currency: string;
 }
 
+/** Reexport — consumidores de domínio mantêm o mesmo import. */
+export { MONEY_MAX_ABS_AMOUNT } from '../../shared/money-limits';
+
 const CURRENCY_REGEX = /^[A-Z]{3}$/;
 const FORBIDDEN_AMOUNT_PATTERN = /[eE]|Infinity|NaN/i;
-
-/**
- * Limite alinhado a PostgreSQL NUMERIC(19,2):
- * 19 dígitos no total, 2 fracionários → até 17 dígitos inteiros.
- */
-export const MONEY_MAX_ABS_AMOUNT = '99999999999999999.99';
 
 Decimal.set({
   precision: 28,

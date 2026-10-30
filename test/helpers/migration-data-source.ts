@@ -13,6 +13,7 @@ import { UniqueAnyProcessedReversalPerReference1761690010000 } from '../../src/i
 import { InboxConsumerNameAndMessageId1761690011000 } from '../../src/infrastructure/database/migrations/012-Inbox_consumer_name_and_message_id';
 import { PendingReferenceTtlAndClaim1793380707372 } from '../../src/infrastructure/database/migrations/1793380707372-PendingReferenceTtlAndClaim';
 import { AlignMonetaryNumericScaleNineteenTwo1793385791150 } from '../../src/infrastructure/database/migrations/1793385791150-AlignMonetaryNumericScaleNineteenTwo';
+import { OutboxInterventionFields1793389000000 } from '../../src/infrastructure/database/migrations/1793389000000-OutboxInterventionFields';
 import { databaseEnv } from '../../src/infrastructure/database/env';
 
 export const ALL_MIGRATIONS = [
@@ -30,6 +31,7 @@ export const ALL_MIGRATIONS = [
   InboxConsumerNameAndMessageId1761690011000,
   PendingReferenceTtlAndClaim1793380707372,
   AlignMonetaryNumericScaleNineteenTwo1793385791150,
+  OutboxInterventionFields1793389000000,
 ] as const;
 
 export function createMigrationDataSource(): DataSource {
