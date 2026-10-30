@@ -24,7 +24,7 @@ export class WalletOrmEntity {
   @Column({
     type: 'numeric',
     precision: 19,
-    scale: 4,
+    scale: 2,
     transformer: numericStringTransformer,
   })
   balance!: string;

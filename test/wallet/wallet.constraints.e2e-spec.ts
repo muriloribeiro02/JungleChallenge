@@ -25,13 +25,13 @@ describe('wallet constraints', () => {
   it('aceita um registro válido', async () => {
     const result = await insertWallet(client, {
       currency: 'BRL',
-      balance: '10.5000',
+      balance: '10.50',
       version: 1,
     });
 
     expect(result.rowCount).toBe(1);
     expect(result.rows[0].currency).toBe('BRL');
-    expect(result.rows[0].balance).toBe('10.5000');
+    expect(result.rows[0].balance).toBe('10.50');
     expect(result.rows[0].version).toBe(1);
   });
 
@@ -45,8 +45,9 @@ describe('wallet constraints', () => {
   });
 
   it('rejeita balance negativo (CHK_wallet_balance_non_negative)', async () => {
+    // NUMERIC(19,2) arredonda '-0.0001' → 0.00; usar magnitude que permanece negativa.
     await expect(
-      insertWallet(client, { balance: '-0.0001' }),
+      insertWallet(client, { balance: '-0.01' }),
     ).rejects.toMatchObject({
       code: '23514',
       constraint: 'CHK_wallet_balance_non_negative',

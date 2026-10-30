@@ -40,7 +40,7 @@ export class WagerTransactionOrmEntity {
   @Column({
     type: 'numeric',
     precision: 19,
-    scale: 4,
+    scale: 2,
     transformer: numericStringTransformer,
   })
   amount!: string;
@@ -103,7 +103,7 @@ export class WagerTransactionOrmEntity {
     name: 'observed_balance',
     type: 'numeric',
     precision: 19,
-    scale: 4,
+    scale: 2,
     nullable: true,
     transformer: nullableNumericStringTransformer,
   })

@@ -594,8 +594,13 @@ describe('ReprocessPendingReferencesUseCase', () => {
     expect(
       outbox.items.filter((m) => m.eventType === 'WagerTransactionRejected'),
     ).toHaveLength(1);
-    expect(outbox.items[0].payload.data.failureCode).toBe(
-      FAILURE_CODE_REFERENCE_NOT_FOUND,
-    );
+    const rejectedPayload = outbox.items[0]?.payload.data;
+    expect(
+      rejectedPayload &&
+        typeof rejectedPayload === 'object' &&
+        'failureCode' in rejectedPayload
+        ? rejectedPayload.failureCode
+        : undefined,
+    ).toBe(FAILURE_CODE_REFERENCE_NOT_FOUND);
   });
 });

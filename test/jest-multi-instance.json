@@ -6,6 +6,9 @@
   "maxWorkers": 1,
   "testTimeout": 180000,
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
+    "^.+\\.(t|j)s$": [
+      "ts-jest",
+      { "tsconfig": "<rootDir>/../tsconfig.json" }
+    ]
   }
 }

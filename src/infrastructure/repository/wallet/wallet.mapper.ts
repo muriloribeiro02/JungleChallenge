@@ -1,10 +1,11 @@
-import Decimal from 'decimal.js';
+import { Money } from '../../../domain/money/money';
 import { Wallet } from '../../../domain/wallet/wallet.entity';
 import { WalletOrmEntity } from './wallet.orm-entity';
 
 /**
  * Converte entre o Aggregate de domínio e o modelo de persistência TypeORM.
- * Normaliza balance lido do NUMERIC(19,4) para escala de 2 casas sem usar number.
+ * Reidratação via Money.fromPersisted — rejeita precisão >2 com dígitos significativos
+ * (sem arredondar 1.2350 → 1.24).
  */
 export class WalletMapper {
   static toPersistence(wallet: Wallet): WalletOrmEntity {
@@ -20,16 +21,16 @@ export class WalletMapper {
   }
 
   static toDomain(row: WalletOrmEntity): Wallet {
-    const amount = new Decimal(row.balance).toFixed(2);
+    const balance = Money.fromPersisted({
+      amount: String(row.balance),
+      currency: row.currency,
+    });
 
     return Wallet.rehydrate({
       id: row.id,
       playerId: row.playerId,
       currency: row.currency,
-      balance: {
-        amount,
-        currency: row.currency,
-      },
+      balance: balance.toJSON(),
       version: row.version,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

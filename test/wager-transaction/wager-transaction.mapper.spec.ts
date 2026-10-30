@@ -62,4 +62,32 @@ describe('WagerTransactionMapper', () => {
     expect(domain.observedBalance).toBeNull();
     expect(domain.observedWalletVersion).toBeNull();
   });
+
+  it('rejeita amount com precisão inválida na reidratação', () => {
+    const row = new WagerTransactionOrmEntity();
+    row.id = id;
+    row.walletId = walletId;
+    row.playerId = null;
+    row.kind = WAGER_TRANSACTION_TYPE_OPENING;
+    row.status = WAGER_TRANSACTION_STATUS_PROCESSED;
+    row.amount = '1.2350';
+    row.currency = 'BRL';
+    row.providerId = null;
+    row.externalTransactionId = null;
+    row.idempotencyKey = null;
+    row.payloadHash = null;
+    row.roundId = null;
+    row.gameId = null;
+    row.externalReference = null;
+    row.resolvedInternalReference = null;
+    row.failureCode = null;
+    row.observedBalance = null;
+    row.observedWalletVersion = null;
+    row.createdAt = new Date();
+    row.updatedAt = new Date();
+
+    expect(() => WagerTransactionMapper.toDomain(row)).toThrow(
+      /2 casas decimais/,
+    );
+  });
 });

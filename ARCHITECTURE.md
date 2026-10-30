@@ -10,7 +10,9 @@
 
 ## ORM
 
-**TypeORM** (aceitável pelo contrato). Transações via `TypeOrmUnitOfWork` + `SELECT FOR UPDATE` na wallet. `Money` persiste como `numeric` + `currency` string, reidratado no mapper — nunca `number` no domínio.
+**TypeORM** (aceitável pelo contrato). Transações via `TypeOrmUnitOfWork` + `SELECT FOR UPDATE` na wallet. `Money` persiste como **`numeric(19,2)`** + `currency` string, reidratado via `Money.fromPersisted` — nunca `number` no domínio. Escala 2 no Domain/API/ORM/PG (migration `AlignMonetaryNumericScaleNineteenTwo`).
+
+**Limitação PG:** `NUMERIC(19,2)` **arredonda** (não rejeita) entradas com >2 casas no INSERT/UPDATE. A rejeição obrigatória fica em `Money` / `MoneyDto`; o tipo no banco alinha armazenamento e magnitude (máx. `99999999999999999.99`), não substitui validação de aplicação.
 
 ## API HTTP (contrato §9)
 
@@ -49,7 +51,7 @@ Header `Idempotency-Key` obrigatório em `POST /wagering/transactions`. Hash can
 
 ### Reconciliação
 
-`POST /wallets/:id/reconciliation` compara saldo materializado com Σ(CREDIT−DEBIT) do ledger. Divergência **não** é corrigida — log `wallet.reconciliation_divergence`.
+`POST /wallets/:id/reconciliation` compara saldo materializado com Σ(CREDIT−DEBIT) do ledger. Divergência **não** é corrigida — log `wallet.reconciliation_divergence` (sem saldos; resposta HTTP mantém os valores do contrato §9).
 
 ## Mensageria
 

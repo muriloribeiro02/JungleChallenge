@@ -128,7 +128,8 @@ test/
 
 | Arquivo | Tipo | Cobre |
 |---------|------|-------|
-| `money/money.spec.ts` | unit | `Money.from`: escala ≤2 casas, rejeição de `number`, moedas inválidas/normalização |
+| `money/money.spec.ts` | unit | `from`/`fromPersisted`; magnitude em add/subtract/negate (MAX±); moeda; negativos internos |
+| `money/align-monetary-scale.migration.spec.ts` | unit | SQL up/down `AlignMonetaryNumericScaleNineteenTwo` + abort se dados com >2 casas |
 | `wallet.entity.spec.ts` | unit | `open` / `rehydrate` / `credit` / `debit`: version, moeda, saldo |
 | `settle-win.use-case.spec.ts` | unit | WIN: crédito, ledger, eventos, idempotência, conflitos |
 | `settle-loss.use-case.spec.ts` | unit | LOSS: amount 0, sem ledger, 1 evento, idempotência |
@@ -144,7 +145,8 @@ test/
 | `process-pending-references.use-case.e2e-spec.ts` | e2e | TTL expire+outbox; 3 claims concorrentes → 1 terminal; ref antes do TTL |
 | `pending-reference-policy.spec.ts` | unit | TTL 24h; backoff min(300, 2^n) |
 | `pending-reference-ttl.migration.spec.ts` | unit | SQL up/down 013 (`pending_reference_at`, claim) |
-| `wallet.mapper.spec.ts` | unit | `WalletMapper` toPersistence/toDomain e round-trip sem `number` |
+| `wallet.mapper.spec.ts` | unit | `WalletMapper` toPersistence/toDomain; rejeita precisão inválida na reidratação |
+| `wager-transaction.mapper.spec.ts` | unit | reidratação; rejeita `amount` com precisão inválida |
 | `get-wallet-balance.use-case.spec.ts` | unit | `GetWalletBalanceUseCase`: encontrada / inexistente (InMemoryWalletRepository) |
 | `open-wallet.use-case.spec.ts` | unit | `OpenWalletUseCase`: zero / positivo / negativo / duplicata / orquestração |
 | `open-wallet.use-case.e2e-spec.ts` | e2e | abertura no Postgres: persistência, duplicata, rollback real |
@@ -161,14 +163,15 @@ test/
 | `pending-reference-lookup.migration.spec.ts` | unit | `up`/`down` da 008: índice parcial PENDING_REFERENCE |
 | `wager-transaction-result-snapshot.migration.e2e-spec.ts` | e2e | 006: ida/volta colunas; backfill `observed_balance`; version NULL; CHECKs |
 | `wallet-ledger-entry.migration.spec.ts` | unit | `up`/`down` da `CreateWalletLedgerEntryTable` |
+| `wallet-ledger-entry.mapper.spec.ts` | unit | rejeita precisão inválida na reidratação (`fromPersisted`) |
 | `outbox-message.migration.spec.ts` | unit | `up`/`down` da `CreateOutboxMessageTable` |
 | `wager-transaction.constraints.e2e-spec.ts` | e2e | status oficiais (+ inválido), amount por kind, idempotência/id externo por provedor, moeda |
 | `wallet-ledger-entry.constraints.e2e-spec.ts` | e2e | moeda, bloqueio LOSS, UPDATE/DELETE imutáveis |
 | `outbox-message.constraints.e2e-spec.ts` | e2e | payload/campos imutáveis; UPDATE operacional; DELETE não restringido pelo contrato |
 | `wallet.repository.e2e-spec.ts` | e2e | `TypeOrmWalletRepository.save` / `findById` com Postgres real |
-| `wallet.constraints.e2e-spec.ts` | e2e | CHECK, UNIQUE, PK, NOT NULL |
+| `wallet.constraints.e2e-spec.ts` | e2e | `numeric(19,2)`; CHECK negativo (≥0.01), UNIQUE, PK, NOT NULL |
 | `wallet.migration.spec.ts` | unit | `up`/`down` da `CreateWalletTable` |
-| `wallet.migration.e2e-spec.ts` | e2e | revert em cascata 008→001; run recria 001–008 |
+| `wallet.migration.e2e-spec.ts` | e2e | revert em cascata →001; run recria incluindo `AlignMonetaryNumericScaleNineteenTwo` |
 
 ```bash
 bun run test:unit -- wager-transaction-result-snapshot.migration
@@ -258,4 +261,7 @@ Evidências: `instanceId` distintos em `/health/live`; requisições com `base` 
 |---------|-----|
 | `test/jest-unit.json` | Unitários (`test:unit`) |
 | `test/jest-e2e.json` | E2E (`test:e2e`) |
+| `test/jest-multi-instance.json` | Multi-instância (`test:multi-instance`) |
 | `package.json` → `jest` | Config padrão do Nest para specs em `src/` |
+
+`ts-jest` nos configs sob `test/` aponta para `tsconfig.json` da raiz (`strict: true`), para o typecheck dos testes acompanhar o mesmo modo estrito do build.

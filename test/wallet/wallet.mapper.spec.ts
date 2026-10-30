@@ -24,7 +24,7 @@ describe('WalletMapper', () => {
     expect(row.updatedAt).toEqual(wallet.updatedAt);
   });
 
-  it('reconstrói domínio via Wallet.rehydrate a partir do NUMERIC com 4 casas', () => {
+  it('reconstrói domínio a partir de NUMERIC com zeros à direita (ex.: 100.5000)', () => {
     const row = new WalletOrmEntity();
     row.id = randomUUID();
     row.playerId = randomUUID();
@@ -44,6 +44,19 @@ describe('WalletMapper', () => {
     expect(wallet.version).toBe(2);
     expect(wallet.createdAt).toEqual(row.createdAt);
     expect(wallet.updatedAt).toEqual(row.updatedAt);
+  });
+
+  it('rejeita reidratação com precisão inválida (sem arredondar 1.2350 → 1.24)', () => {
+    const row = new WalletOrmEntity();
+    row.id = randomUUID();
+    row.playerId = randomUUID();
+    row.currency = 'BRL';
+    row.balance = '1.2350';
+    row.version = 1;
+    row.createdAt = new Date();
+    row.updatedAt = new Date();
+
+    expect(() => WalletMapper.toDomain(row)).toThrow(/2 casas decimais/);
   });
 
   it('ida e volta domínio → ORM → domínio preserva valores monetários', () => {

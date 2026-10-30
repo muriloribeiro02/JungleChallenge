@@ -59,6 +59,32 @@ describe('wallet migrations (e2e ida e volta)', () => {
     }
   }
 
+  async function getNumericScale(
+    tableName: string,
+    columnName: string,
+  ): Promise<{ precision: number; scale: number }> {
+    const client = createDbClient();
+    await client.connect();
+    try {
+      const result = await client.query(
+        `
+          SELECT numeric_precision::int AS precision, numeric_scale::int AS scale
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = $1
+            AND column_name = $2
+        `,
+        [tableName, columnName],
+      );
+      return {
+        precision: result.rows[0].precision,
+        scale: result.rows[0].scale,
+      };
+    } finally {
+      await client.end();
+    }
+  }
+
   async function undoUntilWalletRemoved(): Promise<void> {
     while (await tableExists('wallet')) {
       await dataSource.undoLastMigration();
@@ -109,6 +135,7 @@ describe('wallet migrations (e2e ida e volta)', () => {
       'UniqueAnyProcessedReversalPerReference1761690010000',
       'InboxConsumerNameAndMessageId1761690011000',
       'PendingReferenceTtlAndClaim1793380707372',
+      'AlignMonetaryNumericScaleNineteenTwo1793385791150',
     ]);
     expect(await tableExists('wallet')).toBe(true);
     expect(await tableExists('wager_transaction')).toBe(true);
@@ -126,5 +153,27 @@ describe('wallet migrations (e2e ida e volta)', () => {
       'created_at',
       'updated_at',
     ]);
+
+    expect(await getNumericScale('wallet', 'balance')).toEqual({
+      precision: 19,
+      scale: 2,
+    });
+    expect(await getNumericScale('wager_transaction', 'amount')).toEqual({
+      precision: 19,
+      scale: 2,
+    });
+    expect(
+      await getNumericScale('wager_transaction', 'observed_balance'),
+    ).toEqual({ precision: 19, scale: 2 });
+    expect(await getNumericScale('wallet_ledger_entry', 'amount')).toEqual({
+      precision: 19,
+      scale: 2,
+    });
+    expect(
+      await getNumericScale('wallet_ledger_entry', 'balance_before'),
+    ).toEqual({ precision: 19, scale: 2 });
+    expect(
+      await getNumericScale('wallet_ledger_entry', 'balance_after'),
+    ).toEqual({ precision: 19, scale: 2 });
   });
 });

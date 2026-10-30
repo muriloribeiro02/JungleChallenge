@@ -1,4 +1,4 @@
-import Decimal from 'decimal.js';
+import { Money } from '../../../domain/money/money';
 import {
   LEDGER_DIRECTION_CREDIT,
   LEDGER_DIRECTION_DEBIT,
@@ -33,18 +33,27 @@ export class WalletLedgerEntryMapper {
       );
     }
 
-    const amount = new Decimal(row.amount).toFixed(2);
-    const balanceBefore = new Decimal(row.balanceBefore).toFixed(2);
-    const balanceAfter = new Decimal(row.balanceAfter).toFixed(2);
+    const money = Money.fromPersisted({
+      amount: String(row.amount),
+      currency: row.currency,
+    });
+    const balanceBefore = Money.fromPersisted({
+      amount: String(row.balanceBefore),
+      currency: row.currency,
+    });
+    const balanceAfter = Money.fromPersisted({
+      amount: String(row.balanceAfter),
+      currency: row.currency,
+    });
 
     return WalletLedgerEntry.rehydrate({
       id: row.id,
       walletId: row.walletId,
       transactionId: row.transactionId,
       direction,
-      money: { amount, currency: row.currency },
-      balanceBefore: { amount: balanceBefore, currency: row.currency },
-      balanceAfter: { amount: balanceAfter, currency: row.currency },
+      money: money.toJSON(),
+      balanceBefore: balanceBefore.toJSON(),
+      balanceAfter: balanceAfter.toJSON(),
       createdAt: row.createdAt,
     });
   }

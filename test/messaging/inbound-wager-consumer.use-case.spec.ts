@@ -34,10 +34,16 @@ class FakeBus implements MessageBus {
 
 describe('InboundWagerConsumer (unit)', () => {
   function envelope(overrides: Record<string, unknown> = {}) {
+    const dataOverride =
+      typeof overrides.data === 'object' && overrides.data !== null
+        ? (overrides.data as Record<string, unknown>)
+        : {};
+    const { data: _ignored, ...restOverrides } = overrides;
     return {
       messageId: 'msg-123',
       type: 'WagerTransactionRequested',
       occurredAt: '2026-07-29T15:00:00.000Z',
+      ...restOverrides,
       data: {
         providerId: 'provider-a',
         externalTransactionId: 'tx-1',
@@ -48,22 +54,7 @@ describe('InboundWagerConsumer (unit)', () => {
         gameId: 'game-1',
         kind: 'BET',
         money: { amount: '25.00', currency: 'BRL' },
-        ...((overrides.data as object) ?? {}),
-      },
-      ...overrides,
-      data: {
-        providerId: 'provider-a',
-        externalTransactionId: 'tx-1',
-        idempotencyKey: 'provider-a:tx-1',
-        playerId: randomUUID(),
-        walletId: randomUUID(),
-        roundId: 'round-1',
-        gameId: 'game-1',
-        kind: 'BET',
-        money: { amount: '25.00', currency: 'BRL' },
-        ...(typeof overrides.data === 'object' && overrides.data
-          ? overrides.data
-          : {}),
+        ...dataOverride,
       },
     };
   }
@@ -174,9 +165,16 @@ describe('InboundWagerConsumer (unit)', () => {
 
   it('payload inválido (money number) falha sem ACK e zera visibility', async () => {
     const bus = new FakeBus();
+    const uow: UnitOfWork = {
+      run: async <T>(
+        _work: (repos: TransactionalRepositories) => Promise<T>,
+      ): Promise<T> => {
+        throw new Error('UoW não deve ser chamado para money inválido');
+      },
+    };
     const consumer = new InboundWagerConsumer(
       bus,
-      { run: async () => true },
+      uow,
       { executeWithRepos: jest.fn() } as unknown as SubmitWagerTransactionUseCase,
       { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
       { maxMessages: 10, waitSeconds: 0 },

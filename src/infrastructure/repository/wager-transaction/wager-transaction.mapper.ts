@@ -1,4 +1,4 @@
-import Decimal from 'decimal.js';
+import { Money } from '../../../domain/money/money';
 import {
   WAGER_TRANSACTION_STATUS_PENDING_REFERENCE,
   WAGER_TRANSACTION_STATUS_PROCESSED,
@@ -79,7 +79,17 @@ export class WagerTransactionMapper {
       );
     }
 
-    const amount = new Decimal(row.amount).toFixed(2);
+    const amount = Money.fromPersisted({
+      amount: String(row.amount),
+      currency: row.currency,
+    });
+    const observedBalance =
+      row.observedBalance === null
+        ? null
+        : Money.fromPersisted({
+            amount: String(row.observedBalance),
+            currency: row.currency,
+          });
 
     return WagerTransaction.rehydrate({
       id: row.id,
@@ -87,10 +97,7 @@ export class WagerTransactionMapper {
       playerId: row.playerId,
       type: kind,
       status,
-      amount: {
-        amount,
-        currency: row.currency,
-      },
+      amount: amount.toJSON(),
       providerId: row.providerId,
       externalTransactionId: row.externalTransactionId,
       idempotencyKey: row.idempotencyKey,
@@ -100,13 +107,7 @@ export class WagerTransactionMapper {
       failureCode: (row.failureCode as WagerFailureCode | null) ?? null,
       externalReference: row.externalReference,
       resolvedInternalReference: row.resolvedInternalReference,
-      observedBalance:
-        row.observedBalance === null
-          ? null
-          : {
-              amount: new Decimal(row.observedBalance).toFixed(2),
-              currency: row.currency,
-            },
+      observedBalance: observedBalance?.toJSON() ?? null,
       observedWalletVersion: row.observedWalletVersion,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

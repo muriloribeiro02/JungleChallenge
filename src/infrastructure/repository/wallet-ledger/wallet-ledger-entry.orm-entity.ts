@@ -27,7 +27,7 @@ export class WalletLedgerEntryOrmEntity {
   @Column({
     type: 'numeric',
     precision: 19,
-    scale: 4,
+    scale: 2,
     transformer: numericStringTransformer,
   })
   amount!: string;
@@ -39,7 +39,7 @@ export class WalletLedgerEntryOrmEntity {
     name: 'balance_before',
     type: 'numeric',
     precision: 19,
-    scale: 4,
+    scale: 2,
     transformer: numericStringTransformer,
   })
   balanceBefore!: string;
@@ -48,7 +48,7 @@ export class WalletLedgerEntryOrmEntity {
     name: 'balance_after',
     type: 'numeric',
     precision: 19,
-    scale: 4,
+    scale: 2,
     transformer: numericStringTransformer,
   })
   balanceAfter!: string;

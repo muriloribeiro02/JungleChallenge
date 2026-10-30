@@ -67,8 +67,8 @@ export class ReconcileWalletUseCase {
       if (!consistent) {
         this.logger?.warn('wallet.reconciliation_divergence', {
           walletId: wallet.id,
-          storedBalance: stored.toString(),
-          calculatedBalance: calculated.toString(),
+          consistent: false,
+          hasDifference: true,
           checkedEntries: entries.length,
         });
       }
