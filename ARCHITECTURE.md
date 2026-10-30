@@ -1,20 +1,478 @@
-# Architecture
+# Architecture — Distributed Wagering Processor
 
-## Camadas
+Documento de arquitetura e decisões (ADR simplificado).  
+Contrato oficial: [junglegaming/backend-challenge](https://github.com/junglegaming/backend-challenge).
 
-- **domain** — entidades, VOs (`Money`), portas de repositório, eventos
-- **application** — use cases, ports (`UnitOfWork`, `MessageBus`, `MetricsPort`), workers de mensageria
-- **infrastructure** — TypeORM, SQS, logging, env, adapter Prometheus (`prom-client`)
-- **composition** — wiring único (`createAppComposition`)
-- **api** — controllers Nest, DTOs HTTP, filtros, `NoopAuthGuard`, `GET /metrics`
+Evidências apontam para arquivos reais da implementação. Onde algo **não** está implementado, está dito explicitamente.
 
-## ORM
+---
 
-**TypeORM** (aceitável pelo contrato). Transações via `TypeOrmUnitOfWork` + `SELECT FOR UPDATE` na wallet. `Money` persiste como **`numeric(19,2)`** + `currency` string, reidratado via `Money.fromPersisted` — nunca `number` no domínio. Escala 2 no Domain/API/ORM/PG (migration `AlignMonetaryNumericScaleNineteenTwo`).
+## Sumário
 
-**Limitação PG:** `NUMERIC(19,2)` **arredonda** (não rejeita) entradas com >2 casas no INSERT/UPDATE. A rejeição obrigatória fica em `Money` / `MoneyDto`; o tipo no banco alinha armazenamento e magnitude (máx. `99999999999999999.99`), não substitui validação de aplicação. Constante/check de magnitude: `src/shared/money-limits.ts` (Domain + API, sem HTTP importar o VO).
+1. [Visão das camadas](#1-visão-das-camadas)
+2. [ADR — Clean Architecture e Ports and Adapters](#2-adr--clean-architecture-e-ports-and-adapters)
+3. [ADR — TypeORM versus MikroORM](#3-adr--typeorm-versus-mikroorm)
+4. [ADR — Unit of Work](#4-adr--unit-of-work)
+5. [ADR — SELECT FOR UPDATE versus Optimistic Locking](#5-adr--select-for-update-versus-optimistic-locking)
+6. [ADR — Outbox e Inbox](#6-adr--outbox-e-inbox)
+7. [ADR — SQS FIFO versus Standard](#7-adr--sqs-fifo-versus-standard)
+8. [ADR — Exactly-once versus At-least-once](#8-adr--exactly-once-versus-at-least-once)
+9. [ADR — Money: Decimal versus bigint](#9-adr--money-decimal-versus-bigint)
+10. [Canonical Payload Hash](#10-canonical-payload-hash)
+11. [Failure Codes](#11-failure-codes)
+12. [Autenticação (desenho futuro)](#12-autenticação-desenho-futuro)
+13. [IntegrationEvent versus DomainEventEnvelope](#13-integrationevent-versus-domaineventenvelope)
+14. [Status PENDING e FAILED no schema](#14-status-pending-e-failed-no-schema)
+15. [API HTTP e códigos](#15-api-http-e-códigos)
+16. [Workers, PENDING_REFERENCE, shutdown, métricas](#16-workers-pending_reference-shutdown-métricas)
+17. [Reversões REFUND / ROLLBACK](#17-reversões-refund--rollback)
+18. [Limitações conhecidas](#18-limitações-conhecidas)
+19. [Pontos sem comprovação / não inventados](#19-pontos-sem-comprovação--não-inventados)
 
-## API HTTP (contrato §9)
+---
+
+## 1. Visão das camadas
+
+| Camada | Responsabilidade | Local |
+|--------|------------------|--------|
+| **domain** | Entidades, VOs (`Money`), erros, portas de repositório, envelopes tipados | `src/domain/` |
+| **application** | Use cases, ports (`UnitOfWork`, `MessageBus`, `MetricsPort`, …), workers de mensageria | `src/application/` |
+| **infrastructure** | TypeORM, SQS, logging, env, Prometheus, ops CLI | `src/infrastructure/` |
+| **composition** | Wiring único | `src/composition/create-app-composition.ts` |
+| **api** | Controllers Nest, DTOs, filtros, guards | `src/api/` |
+
+NestJS vive em **api** (+ bootstrap). Domínio e application **não** importam `@nestjs/*`.
+
+---
+
+## 2. ADR — Clean Architecture e Ports and Adapters
+
+### Problema
+
+Misturar HTTP, ORM e regras financeiras no mesmo módulo torna impossível testar concorrência/idempotência sem Nest/SQS e facilita vazar `number`/SQL para o núcleo financeiro.
+
+### Decisão
+
+Separar **Domain → Application → Infrastructure**, com **ports** na application e **adapters** na infrastructure. Controllers Nest só traduzem HTTP ↔ use cases montados em `createAppComposition`.
+
+### Por que Nest não deve vazar para Domain
+
+- O VO `Money` e as entidades devem permanecer testáveis sem DI Nest (`src/domain/money/money.ts`).
+- Decorators ORM ficam em `*.orm-entity.ts`; o domínio usa factories (`open` / `rehydrate`).
+- Controllers dependem de use cases; use cases dependem de ports — não o contrário.
+
+### Trade-offs da abstração
+
+| Prós | Contras |
+|------|---------|
+| Testes unitários com fakes de `UnitOfWork` / repos | Mais arquivos e mapping ORM ↔ domínio |
+| Troca de adapter (SQS, métricas) sem reescrever use case | Risco de “over-port” se cada detalhe virar interface |
+| Composition root explícito | Wiring concentrado em um arquivo |
+
+### Evidência
+
+- Ports: `src/application/ports/unit-of-work.ts`, `message-bus.ts`, `metrics.ts`
+- Composition: `src/composition/create-app-composition.ts`
+- Domínio sem Nest: `src/domain/**`
+
+---
+
+## 3. ADR — TypeORM versus MikroORM
+
+### Contexto do contrato (§4)
+
+O desafio marca **MikroORM como preferencial** (UoW / Identity Map / `LockMode` explícitos) e **aceita TypeORM**. Prisma está fora de escopo.
+
+### Decisão real
+
+Este repositório usa **TypeORM 0.3.x**.
+
+### Justificativa comprovada (sem inventar)
+
+1. **Familiaridade da equipe** no momento da escolha (registrada nas notas iniciais do projeto) — motivo pragmático de timebox, não vantagem técnica intrínseca.
+2. **Capacidade comprovada na implementação:**
+   - transações via `DataSource.transaction` (`TypeOrmUnitOfWork`);
+   - repositórios ligados ao `EntityManager` da TX;
+   - migrations versionadas e reversíveis em `src/infrastructure/database/migrations/`;
+   - lock pessimista `setLock('pessimistic_write')` na wallet.
+
+### O que **não** afirmamos
+
+- Não afirmamos superioridade de performance, Identity Map ou DX sobre MikroORM.
+- Não há evidência no código de avaliação formal MikroORM vs TypeORM além da aceitação contratual.
+
+### Trade-offs
+
+| TypeORM (adotado) | MikroORM (preferência do desafio, não adotado) |
+|-------------------|-----------------------------------------------|
+| UoW **manual** (`TypeOrmUnitOfWork` + repos por manager) | UoW/`EntityManager.transactional` mais idiomático |
+| Lock via QueryBuilder | `LockMode` de primeira classe |
+| Migrations TypeORM já no fluxo `migration:run/revert` | Teria exigido stack e mapeamento diferentes |
+
+### Evidência
+
+- `package.json` → `typeorm`
+- `src/infrastructure/unit-of-work/typeorm-unit-of-work.ts`
+- `src/infrastructure/repository/wallet/typeorm-wallet.repository.ts`
+- `src/infrastructure/database/data-source.ts`
+
+---
+
+## 4. ADR — Unit of Work
+
+### Problema
+
+Wallet, ledger, wager_transaction, inbox e outbox precisam commit/rollback **juntos**. Publicar no SQS **antes** do commit viola a restrição §5.4 do contrato.
+
+### Como a transação é iniciada e encerrada
+
+`TypeOrmUnitOfWork.run` chama `dataSource.transaction(async (manager) => …)`.  
+Sucesso do callback → COMMIT; exceção → ROLLBACK.
+
+```text
+unitOfWork.run(repos => { … })  →  DataSource.transaction(manager)
+```
+
+### Como os repositories participam
+
+`createTransactionalRepositories(manager)` instancia TypeORM repos com `manager.getRepository(...)` (e passa `manager` onde há SQL raw / claim). Todos compartilham a **mesma** conexão/TX.
+
+### Outbox e Inbox na atomicidade
+
+- **HTTP / PlaceBet etc.:** na mesma `run`, persistem wallet/ledger/tx e `outboxMessages.save(...)`.
+- **Inbound SQS:** `inboxMessages.tryInsert` + `SubmitWagerTransactionUseCase.executeWithRepos` na mesma `run`; ACK só **depois** do commit (`InboundWagerConsumer`).
+- **Inbox de domain events:** padrão análogo em `InboxConsumer`.
+
+### Comparação com MikroORM
+
+MikroORM exporia UoW/Identity Map no `EntityManager` da lib. Aqui o port `UnitOfWork` é fino: só `run(work)`. Não há Identity Map de domínio — cada `find` reidrata via mapper.
+
+### Evidência
+
+- `src/infrastructure/unit-of-work/typeorm-unit-of-work.ts`
+- `src/application/messaging/inbound-wager-consumer.ts` (`tryInsert` + `executeWithRepos`)
+- Use cases: `src/application/use-cases/wager/place-bet.use-case.ts` (save outbox na TX)
+
+---
+
+## 5. ADR — SELECT FOR UPDATE versus Optimistic Locking
+
+### Problema
+
+Duas BET de `80.00` na mesma wallet com saldo `100.00` não podem ambas debitar (cenário obrigatório §8). `read → calculate → update` sem controle é falha eliminatória.
+
+### Decisão
+
+**Lock pessimista** na linha da wallet: `SELECT … FOR UPDATE` via TypeORM `setLock('pessimistic_write')` em `findByIdForUpdate`, dentro da UoW.
+
+### Como evita lost updates
+
+A segunda transação **espera** o unlock da primeira. Após a primeira debitar, a segunda lê o saldo já atualizado e rejeita com `INSUFFICIENT_FUNDS` se não couber.
+
+### Concorrência entre apostas
+
+Unidade de concorrência = `walletId` (contrato §8). Wallets distintas não compartilham a mesma linha — processam em paralelo. Não há lock global.
+
+### Papel real de `wallet.version`
+
+- Inicia em `1` na abertura (`Wallet.open`).
+- Incrementa em `credit` / `debit` **somente quando o saldo muda** (`src/domain/wallet/wallet.entity.ts`).
+- É persistido e exposto (API / evento `WalletBalanceChanged.walletVersion` / snapshot `observed_wallet_version`).
+
+**`version` não implementa CAS nem optimistic locking.**  
+Não há `UPDATE … WHERE version = $expected`. A concorrência correta depende do **FOR UPDATE**, não do campo `version`.
+
+### Trade-offs
+
+| Pessimista (adotado) | Optimistic (não adotado como mecanismo) |
+|----------------------|------------------------------------------|
+| Serializa hot wallet; sem retry de versão | Mais throughput sob baixa contenção; exige retry |
+| Risco de espera/lock wait sob carga | `version` sozinho não bastaria sem CAS |
+
+### Evidência
+
+- `TypeOrmWalletRepository.findByIdForUpdate` — comment: “lock pessimista evita lost update sem retry de version”
+- `PlaceBetUseCase` chama `findByIdForUpdate` antes de debitar
+- `Wallet.credit` / `debit` incrementam `_version` sem WHERE version
+
+---
+
+## 6. ADR — Outbox e Inbox
+
+### Problema (dual write)
+
+Gravar no Postgres e publicar no SQS em dois passos sem atomicidade: crash entre eles perde evento ou publica sem efeito financeiro.
+
+### Alternativas consideradas (não adotadas como caminho principal)
+
+| Alternativa | Motivo de não usar como garantia |
+|-------------|----------------------------------|
+| **Publish in-process** após commit | Ainda há janela crash pós-commit pré-publish; sem tabela, recuperação é ad hoc |
+| **CDC** (WAL → fila) | Fora do escopo local; complexidade operacional maior que o desafio pede |
+
+### Por que Outbox
+
+Na **mesma TX** financeira, grava-se `outbox_message`. Um publisher separado faz claim (`FOR UPDATE SKIP LOCKED` + `locked_until`), publica no bus e só então `markPublished`. Crash pré-publish → outra instância reclama após lease.
+
+### Inbox
+
+Consumidores deduplicam por **`(consumer_name, message_id)`** (`tryInsert`). Redelivery at-least-once não duplica efeito se a primeira execução já commitou.
+
+### Intervenção (E2.3.5)
+
+Backoff `min(300, 2^attempts)`; a partir de **10 attempts** (incrementados no **claim**) → `intervention_required_at` pausa claim automático. Recuperação: `ClearOutboxInterventionUseCase` / `bun run ops:clear-outbox-intervention`.  
+Detalhes: [`docs/OUTBOX_INTERVENTION_RUNBOOK.md`](docs/OUTBOX_INTERVENTION_RUNBOOK.md).
+
+### Trade-offs at-least-once
+
+- Evento pode ser publicado mais de uma vez se crash entre publish e `markPublished`.
+- Consumidor **deve** ser idempotente (Inbox). Não prometemos exactly-once de entrega.
+
+### Evidência
+
+- Claim: `src/infrastructure/repository/outbox/typeorm-outbox-message.repository.ts`
+- Publisher: `src/application/messaging/outbox-publisher.ts`
+- Inbox: `src/application/messaging/inbox-consumer.ts`, `inbound-wager-consumer.ts`
+
+---
+
+## 7. ADR — SQS FIFO versus Standard
+
+### Inbound — FIFO (`jungle-wager-transactions.fifo`)
+
+**Por quê:** contrato §10 exige fila `.fifo` (+ DLQ) para `WagerTransactionRequested`. Ordenação por grupo e deduplicação de broker são **otimização**, não a garantia final (banco + Inbox continuam soberanos).
+
+**MessageGroupId:** em publish FIFO, `SqsMessageBus` usa `attributes.messageGroupId` → senão `attributes.walletId` → senão `'default'`. Testes inbound usam `wallet.id` como group — alinha com unidade de concorrência `walletId`.
+
+**MessageDeduplicationId:** `message.id` (id da mensagem de negócio). A fila local também habilita `ContentBasedDeduplication` em `docker/localstack/init-sqs.sh`.
+
+### Domain events — Standard (`jungle-wager-events`)
+
+**Por quê (implementação real):** fila de eventos criada na Fase B como standard e mantida; o contrato §10 detalha a FIFO de **entrada de apostas**, não obriga FIFO na fila de integração outbox neste ambiente. Consumers de eventos dependem de **Inbox**, não de ordenação FIFO global.
+
+### Trade-offs
+
+| FIFO inbound | Standard events |
+|--------------|-----------------|
+| Ordenação por `MessageGroupId`; throughput por grupo | Maior paralelismo entre mensagens |
+| Dedup de broker complementar | Dedup só via Inbox + ids estáveis |
+
+### Evidência
+
+- `docker/localstack/init-sqs.sh`
+- `src/infrastructure/messaging/sqs-message-bus.ts` (bloco `fifo`)
+- `src/infrastructure/messaging/sqs.env.ts`
+
+---
+
+## 8. ADR — Exactly-once versus At-least-once
+
+### Por que não prometemos exactly-once
+
+SQS e o outbox worker oferecem **at-least-once**. Exactly-once ponta a ponta exigiria broker transacional + consumidor sem side effects duplicáveis de forma absoluta — fora do modelo adotado.
+
+### Crash pós-commit e pré-ACK
+
+1. Inbound/Inbox commitam efeito + inbox na UoW.
+2. Processo morre antes do `ack`.
+3. SQS redelivery → `tryInsert` falha (duplicata) → ACK sem reaplicar efeito.
+
+### Crash pós-publish e pré-`markPublished`
+
+1. Outbox já enviou ao SQS.
+2. Processo morre antes de `markPublished`.
+3. Lease expira → outro publisher republica o mesmo `eventId`.
+4. Consumer Inbox deduplica por `(consumer_name, message_id)` / event id.
+
+### Como a idempotência protege efeitos
+
+- **HTTP / negócio:** `Idempotency-Key` + `payload_hash` únicos por provider; replay devolve resultado original.
+- **Mensageria:** Inbox persistente.
+- **Uniques PG:** idempotency key, external id, reversão PROCESSED.
+
+### Evidência
+
+- Shutdown / abandon: `ARCHITECTURE` seção 16 + `MessagingWorkersHost` / `shutdownGate`
+- Publisher comments em `outbox-publisher.ts`
+- Multi-instance e messaging e2e cobrem crash/redelivery
+
+---
+
+## 9. ADR — Money: Decimal versus bigint
+
+### Por que `decimal.js` na aritmética
+
+`Money` usa `Decimal` com `precision: 28` e `ROUND_HALF_UP` (`src/domain/money/money.ts`). Operações `add` / `subtract` / `negate` retornam novas instâncias. Entrada e JSON usam **string** decimal escala 2 — nunca `number`.
+
+### Onde `bigint` é utilizado
+
+Somente em `src/shared/money-limits.ts` (`amountToAbsCents`) para comparar magnitude com o teto `NUMERIC(19,2)` **sem** float. Não é o motor de aritmética do domínio.
+
+### Por que `number` não serve
+
+IEEE-754 não representa decimais financeiros de forma exata (`0.1 + 0.2`). Contrato: falha eliminatória usar `number`/`float`/`double` para dinheiro.
+
+### Limites `NUMERIC(19,2)`
+
+- Persistência: colunas `numeric(19,2)` (migration `AlignMonetaryNumericScaleNineteenTwo`).
+- Magnitude máx. documentada: `99999999999999999.99` (`MONEY_MAX_ABS_AMOUNT`).
+- **Limitação PG:** `NUMERIC(19,2)` **arredonda** (não rejeita) >2 casas no INSERT/UPDATE. Rejeição obrigatória fica em `Money` / `MoneyDto`.
+
+### Evidência
+
+- `src/domain/money/money.ts`
+- `src/shared/money-limits.ts`
+- `src/api/http/money.dto.ts`
+
+---
+
+## 10. Canonical Payload Hash
+
+Implementação: `src/application/wager/canonical-payload-hash.ts`.
+
+### Algoritmo
+
+1. Monta objeto de negócio tipado.
+2. `canonicalJsonStringify` → `JSON.stringify` após **ordenar chaves recursivamente** (`Object.keys(record).sort()`).
+3. `createHash('sha256').update(canonical, 'utf8').digest('hex')`.
+
+### Campos incluídos (BET / WIN / LOSS)
+
+`providerId`, `externalTransactionId`, `playerId`, `walletId`, `roundId`, `gameId`, `kind`, `amount`, `currency`.
+
+### Campos adicionais (REFUND / ROLLBACK)
+
+Os mesmos + `referenceExternalTransactionId`.
+
+### Normalização
+
+Não há normalização monetária extra no hash além dos strings já validados pelo use case / `Money.from`. Shape flat `amount`+`currency` (não aninha `money: {…}`) para não invalidar hashes já persistidos.
+
+### Campos excluídos
+
+- Header `Idempotency-Key` e metadados de transporte.
+- Qualquer campo não listado no tipo `ExternalWagerBusinessPayload`.
+
+### Detecção de reuso de key com payload diferente
+
+1. Busca por `(providerId, idempotencyKey)`.
+2. Se existe e `existing.payloadHash !== payloadHash` → `IdempotencyPayloadConflictError` → HTTP **409**.
+3. Se hash igual → replay com `idempotentReplay: true` e snapshot original.
+
+### Evidência
+
+- Hash: `canonical-payload-hash.ts`
+- Comparação: `PlaceBetUseCase.buildReplayFromExisting` (padrão similar nos demais kinds)
+
+---
+
+## 11. Failure Codes
+
+Fonte: `src/domain/wager-transaction/failure-codes.ts`.
+
+### Taxonomia implementada
+
+| Código | Categoria | Quando |
+|--------|-----------|--------|
+| `INSUFFICIENT_FUNDS` | Rejeição de negócio | BET sem saldo |
+| `REVERSAL_WOULD_CAUSE_NEGATIVE_BALANCE` | Rejeição de negócio | ROLLBACK deixaria saldo &lt; 0 |
+| `REFERENCE_NOT_FOUND` | Referência inválida / ausente | Após TTL 24h sem referência |
+| `INVALID_REFERENCE_TYPE` | Referência inválida | Kind da referência não permitido |
+| `REFERENCE_SCOPE_MISMATCH` | Referência inválida | provider/player/wallet/currency/round divergem |
+| `REFERENCE_AMOUNT_MISMATCH` | Referência inválida | amount ≠ referência |
+| `REFERENCE_NOT_PROCESSED` | Referência inválida | Referência existe mas não `PROCESSED` |
+| `REFERENCE_ALREADY_REVERSED` | Conflito | Já existe reversão `PROCESSED` (REFUND **ou** ROLLBACK) da mesma ref |
+
+### Falhas de processamento (infra)
+
+**Não há `failureCode` de infraestrutura nesta taxonomia.** Erros transitórios de SQS/Postgres não gravam status `FAILED` no domínio (ver §14). Caminho: retry de visibilidade / DLQ após `maxReceiveCount`, ou intervenção Outbox.
+
+### Persistência e API
+
+- Persistidos em `wager_transaction.failure_code` quando status = `REJECTED`.
+- Submit HTTP: rejeição de negócio → **200** + body com `status: REJECTED` e `failureCode` (não 4xx de negócio).
+- `PENDING_REFERENCE` → **202**; `REFERENCE_NOT_FOUND` só após TTL (não no aceite pendente).
+- Conflitos de idempotência/id externo → **409** (erros de aplicação, não `failureCode` de negócio).
+
+---
+
+## 12. Autenticação (desenho futuro)
+
+### Estado atual (implementado)
+
+- **Não** há IdP. Decisão alinhada ao contrato §2 (sem pontos na rubrica).
+- `NoopAuthGuard` (`src/api/auth/noop-auth.guard.ts`): `canActivate` sempre `true`.
+- Registrado como `APP_GUARD` em `app.module.ts` e `@UseGuards(NoopAuthGuard)` em wallets/wagering.
+- Health permanece aberto (mesmo com guard no-op).
+- `ProviderIdentityPort` define `resolveProviderId(authorizationHeader?)` — **porta sem adapter OIDC implementado**.
+
+### Desenho futuro (não implementado — planejamento)
+
+1. Substituir `NoopAuthGuard` por guard que valide JWT/OIDC (Keycloak ou Zitadel no Compose).
+2. Validação do token no **edge HTTP** (guard Nest), antes do use case.
+3. Adapter `ProviderIdentityPort` lê claims (`azp` / `client_id` / claim custom) e resolve `providerId` confiável.
+4. Controllers **deixam de confiar** em `providerId` livre do body como identidade: body pode repetir o id apenas para auditoria; a autorização compara claim ≠ body → 403.
+5. Filas continuam canal interno (contrato); identidade do provider na mensagem inbound ainda passa pelas validações de domínio, mas a origem HTTP fica autenticada.
+
+**Não afirmamos** que Keycloak/Zitadel já rodam neste Compose.
+
+---
+
+## 13. IntegrationEvent versus DomainEventEnvelope
+
+### Contrato (§11)
+
+Esqueleto com classe abstrata `IntegrationEvent<T>` e subclasses (`WalletBalanceChanged`, …) com `eventType`/`version` no tipo.
+
+### Implementação real
+
+- Tipo `DomainEventEnvelope` em `src/domain/events/domain-event.ts` (campos: `eventId`, `eventType`, `aggregateId`, `correlationId`, `causationId?`, `occurredAt` ISO string, `version`, `data`).
+- Builders em `src/application/events/*` produzem envelopes tipados (`WagerTransactionProcessedEvent`, etc.).
+- Persistência outbox: `OutboxMessage.fromEnvelope(envelope)` grava o JSON do envelope.
+
+### Justificativa da escolha real
+
+Priorizou-se um **envelope JSON estável e versionável** com tipagem TypeScript (`DomainEventEnvelope<'WalletBalanceChanged', …>`) e factories de aplicação, sem hierarquia de classes no domínio. O contrato dos **campos** do envelope e dos `data` (MoneyProps em string) é preservado.
+
+### Vantagens / trade-offs
+
+| Type envelope (adotado) | Classes abstratas (contrato esqueleto) |
+|-------------------------|----------------------------------------|
+| Serialização direta; menos boilerplate | `eventType`/`version` amarrados à classe |
+| Fácil de persistir em jsonb | Polimorfismo OO mais explícito |
+| Desvio do esqueleto do README do desafio | Pode exigir explicação na apresentação |
+
+**Não alteramos** o modelo de eventos nesta documentação.
+
+---
+
+## 14. Status PENDING e FAILED no schema
+
+### Schema (CHECK)
+
+Migration `002-Create_table_wager_transaction` permite:
+
+`PENDING` | `PENDING_REFERENCE` | `PROCESSED` | `REJECTED` | `FAILED`
+
+### Domínio (tipo TypeScript)
+
+`WagerTransactionStatus` = **somente**  
+`PENDING_REFERENCE` | `PROCESSED` | `REJECTED`  
+(`src/domain/wager-transaction/wager-transaction.entity.ts`).
+
+Não há método `fail()` nem factory que produza `FAILED` ou `PENDING` no domínio atual. Fluxos externos nascem direto em `PROCESSED`, `REJECTED` ou `PENDING_REFERENCE`.
+
+### Evidências de “não usado pelo domínio”
+
+- Migration `005-Add_failure_code_to_wager_transaction.ts` comenta: comportamento **FAILED não implementado** nesta migration.
+- Helpers de teste podem inserir `PENDING` via SQL cru (`test/helpers/db.ts`) para constraints — isso **não** prova uso pelo domínio.
+- Constraints e2e aceitam inserir `FAILED`/`PENDING` no PG porque o CHECK permite.
+
+**Conclusão:** `PENDING` e `FAILED` no CHECK são **capacidade de schema / legado alinhado ao esqueleto do contrato**, não estados ativos do modelo de domínio atual.
+
+---
+
+## 15. API HTTP e códigos
 
 | Método | Path | Status principais |
 |--------|------|-------------------|
@@ -22,122 +480,83 @@
 | GET | `/wallets/:walletId` | 200 / 404 |
 | GET | `/wallets/:walletId/ledger?cursor&limit` | 200 / 404 |
 | POST | `/wallets/:walletId/reconciliation` | 200 / 404 |
-| POST | `/wagering/transactions` | 200 (negócio) / 202 (`PENDING_REFERENCE`) / 400 / 409 |
+| POST | `/wagering/transactions` | 200 / 202 / 400 / 409 |
 | GET | `/wagering/transactions/:transactionId` | 200 / 404 |
 | GET | `/providers/:providerId/wagering/transactions/:externalTransactionId` | 200 / 404 |
 | GET | `/health/live` | 200 |
-| GET | `/health/ready` | 200 / 503 (`DependencyHealthPort` → TypeORM + MessageBus) |
-| GET | `/metrics` | 200 (Prometheus text) |
+| GET | `/health/ready` | 200 / 503 (`DependencyHealthPort`) |
+| GET | `/metrics` | 200 |
 
-### Status codes (decisão)
+Mapeamento HTTP (contrato exige distinção clara, não códigos fixos):
 
-O contrato exige distinção clara, sem ditar códigos. Adotamos:
+- **400** — validação / payload / `Idempotency-Key` ausente  
+- **404** — wallet ou transação inexistente  
+- **409** — wallet duplicada; idempotência key + payload diferente; unique id externo  
+- **200** — `PROCESSED` ou `REJECTED` (negócio no body)  
+- **202** — `PENDING_REFERENCE`  
+- **503** — readiness (PG/SQS / stopping)  
+- **500** — inesperado (sem SQL/stack na resposta)
 
-- **400** — validação / payload inválido / header `Idempotency-Key` ausente
-- **404** — wallet ou transação inexistente
-- **409** — wallet duplicada, conflito de idempotência (mesmo key, payload diferente), unique de id externo
-- **200** — submit com `PROCESSED` ou `REJECTED` (rejeição de negócio no body + `failureCode`)
-- **202** — submit com `PENDING_REFERENCE`
-- **503** — readiness (Postgres/SQS indisponíveis)
-- **500** — erro inesperado (sem SQL/stack na resposta)
+Reconciliação: compara saldo materializado × Σ ledger; **não** corrige; log + métrica + resposta §9.
 
-### Autenticação (decisão §2)
+---
 
-Não implementamos IdP (sem pontos na rubrica). `NoopAuthGuard` + `ProviderIdentityPort` documentam o ponto de extensão. Health permanece aberto.
+## 16. Workers, PENDING_REFERENCE, shutdown, métricas
 
-### Idempotência
+### Workers (`WORKERS_ENABLED=true`)
 
-Header `Idempotency-Key` obrigatório em `POST /wagering/transactions`. Hash canônico já usado nos use cases (`canonical-payload-hash`). Replay → mesma resposta com `idempotentReplay: true`.
+Por processo (`MessagingWorkersHost`): Outbox publish, Inbox domain events, Inbound wager, worker PENDING_REFERENCE. Compose: `app-1..3` (3001–3003), `INSTANCE_ID` em `/health/live`.
 
-### Reconciliação
+### PENDING_REFERENCE (C2)
 
-`POST /wallets/:id/reconciliation` compara saldo materializado com Σ(CREDIT−DEBIT) do ledger. Divergência **não** é corrigida — log `wallet.reconciliation_divergence` (sem saldos; resposta HTTP mantém os valores do contrato §9).
+- TTL **24h** via `pending_reference_at`
+- Backoff `next_attempt_at = now + min(300, 2^n)` (`n = pending_attempt_count` no **defer**, não no claim)
+- Claim: `FOR UPDATE SKIP LOCKED` + `locked_until`
+- Expiração → `REJECTED` + `REFERENCE_NOT_FOUND` + outbox na mesma UoW
 
-## Mensageria
+### Graceful shutdown (C3)
 
-Outbox claim (`SKIP LOCKED`) → SQS; Inbox + ACK após commit. Filas locais via LocalStack (nomes do ambiente atual).
+- `enableShutdownHooks` → drain workers (`SHUTDOWN_DRAIN_MS`) → `DataSource.destroy`
+- Pré-ACK abort → redelivery; outbox claimada → `locked_until`
+- `/health/ready` → 503 se `stopping`
 
-**Intervenção (E2.3.5):** backoff `min(300, 2^attempts)`; a partir de **10 attempts** (incrementados no claim) o evento recebe `intervention_required_at` e deixa de ser claimável até `ClearOutboxInterventionUseCase` / `bun run ops:clear-outbox-intervention` (sem HTTP admin). Ver [`docs/OUTBOX_INTERVENTION_RUNBOOK.md`](docs/OUTBOX_INTERVENTION_RUNBOOK.md).
+### Prometheus (D)
 
-### Workers por processo (Fase B/C)
+Porta `MetricsPort` + `safeMetrics`. Catálogo: [`docs/METRICS.md`](docs/METRICS.md).
 
-Com `WORKERS_ENABLED=true`, cada instância Nest agenda loops independentes
-(`MessagingWorkersHost`): Outbox publish, Inbox de **eventos** e Inbound
-`WagerTransactionRequested`. Claim outbox: `FOR UPDATE SKIP LOCKED` +
-`locked_until`.
+---
 
-Compose: `app-1` / `app-2` / `app-3` (portas 3001–3003). `INSTANCE_ID` em
-`/health/live`.
+## 17. Reversões REFUND / ROLLBACK
 
-### Filas SQS (decisão §10)
+Contrato §7.4: sem reverter duas vezes pelo **mesmo tipo**.
 
-| Fila | Tipo | Uso |
-|------|------|-----|
-| `jungle-wager-transactions.fifo` (+ DLQ `.fifo`) | **FIFO** | Inbound `WagerTransactionRequested` — alinhado ao contrato |
-| `jungle-wager-events` (+ DLQ) | Standard | Eventos de integração (outbox) |
+**Interpretação adicional implementada:** no máximo **uma** reversão `PROCESSED` (`REFUND` **ou** `ROLLBACK`) por `(providerId, external_reference)` — índice `UQ_wager_transaction_processed_reversal_ref` (migration 011). Impede crédito duplicado REFUND+ROLLBACK da mesma BET. `ROLLBACK` de um `REFUND` permanece válido (referência = id externo do REFUND).
 
-A fila de **eventos** permanece standard no ambiente local (histórico Fase B);
-a de **entrada de apostas** é FIFO conforme o contrato. Inbox deduplica por
-`(consumer_name, message_id)`.
+---
 
-### Inbound (Fase C1)
+## 18. Limitações conhecidas
 
-`InboundWagerConsumer`: valida envelope (money como string) → UoW única
-`inbox.tryInsert` + `SubmitWagerTransactionUseCase.executeWithRepos` (efeito +
-outbox) → ACK após commit.
+- OpenTelemetry tracing **não** implementado.
+- Counters Prometheus zeram no restart do processo; DLQ depth é aproximada (SQS).
+- Fila de **eventos** local permanece **standard**; inbound é FIFO.
+- Auth IdP **não** implementada (apenas extensão).
+- Status `FAILED` / `PENDING` no CHECK **sem** ciclo de vida no domínio.
+- Intervenção Outbox é operacional via CLI, **sem** endpoint HTTP admin.
 
-### PENDING_REFERENCE TTL (Fase C2)
+---
 
-- `pending_reference_at`: momento de entrada em `PENDING_REFERENCE` (TTL **24h**).
-- Backoff de reavaliação: `next_attempt_at = now + min(300, 2^n)` s
-  (`n = pending_attempt_count`); sem teto extra de tentativas.
-- Expiração prevalece sobre `next_attempt_at` futuro.
-- Claim multi-instância: `FOR UPDATE SKIP LOCKED` + `locked_until` (só lease).
-- `pending_attempt_count` incrementa em **defer** (`recordDeferRetry`), comum a
-  Inbox e worker — não no claim (evita contornar backoff no caminho Inbox).
-- Expiração → `REJECTED` + `REFERENCE_NOT_FOUND` + outbox
-  `WagerTransactionRejected` na mesma UoW.
-- Worker: `ProcessPendingReferencesUseCase` no `MessagingWorkersHost`
-  (`WORKER_PENDING_INTERVAL_MS`).
+## 19. Pontos sem comprovação / não inventados
 
-### Graceful shutdown (Fase C3)
+| Afirmação | Status |
+|-----------|--------|
+| MikroORM seria mais rápido / melhor Identity Map neste projeto | **Não avaliado** no código |
+| Optimistic locking via `version` | **Não implementado** |
+| Exactly-once end-to-end | **Não prometido** |
+| IdP Keycloak/Zitadel em Compose | **Só desenho futuro** |
+| `ProviderIdentityPort` adapter real | **Só interface** |
+| Uso de `FAILED` pelo domínio | **Sem evidência de uso** |
+| Classes `IntegrationEvent` abstratas | **Não adotadas**; envelope tipado sim |
 
-- `main.ts`: `app.enableShutdownHooks()` — Nest propaga SIGTERM/SIGINT.
-- Ordem: `MessagingWorkersHost.beforeApplicationShutdown` (stopped + clear
-  timers + await in-flight até `SHUTDOWN_DRAIN_MS`) →
-  `AppModule.onModuleDestroy` (`DataSource.destroy`).
-- Limpar timer **não** cancela tick em voo; só impede novos polls.
-- ACK Inbox/Inbound permanece após commit; interrupção pré-ACK → redelivery
-  (at-least-once + Inbox).
-- `/health/ready` → 503 se `stopping`; Compose: `stop_signal: SIGTERM`,
-  `stop_grace_period: 15s`.
-- **Drain timeout:** marca `abandonInFlight` → sem ACK; `ChangeMessageVisibility(0)`
-  best-effort nos receipts tracked; outbox claimada recupera via `locked_until`.
-  Se VT=0 falhar, permanece o visibility timeout original.
-- Probe de teste: `SHUTDOWN_TEST_HOLD_MS` (0 em prod) — hold após receive/claim.
+---
 
-### Observabilidade Prometheus (Fase D)
-
-- Porta `MetricsPort` + `safeMetrics` (falha de métrica não afeta TX financeira).
-- Adapter `createPrometheusMetrics` (Bun 1.4.4 + `prom-client` 15.x).
-- Counters/histograms por processo; gauges de outbox (PG) e DLQ (SQS) com cache ~10s.
-- Compose: serviço `prometheus` scrapa `app-1`/`app-2`/`app-3` (`docker/prometheus/prometheus.yml`).
-- Catálogo: [`docs/METRICS.md`](docs/METRICS.md). Sem Grafana nesta fase.
-
-## Reversões REFUND / ROLLBACK (decisão §7)
-
-Contrato §7.4: uma referência não pode ser revertida duas vezes pelo **mesmo tipo**.
-Tabela §7: REFUND reverte BET “uma única vez”; ROLLBACK reverte a referência “uma única vez”.
-Invariante global: não duplicar créditos.
-
-**Interpretação adicional (documentada):** no máximo **uma** reversão `PROCESSED`
-(`REFUND` **ou** `ROLLBACK`) por `(providerId, external_reference)`.
-Impede REFUND+ROLLBACK da mesma BET (ambos creditariam).
-`ROLLBACK` de um `REFUND` continua válido: a referência externa é o id externo do
-REFUND, não o da BET. Índice: `UQ_wager_transaction_processed_reversal_ref` (migration 011).
-
-## Limitações conhecidas
-
-- OpenTelemetry tracing ainda não implementado (métricas Prometheus sim — Fase D).
-- Counters zeram no restart do processo; DLQ depth é aproximada (SQS); ver `docs/METRICS.md`.
-- Fila de **eventos** local permanece standard; inbound de apostas é FIFO.
+*Fim do ARCHITECTURE.md — E2.4.1.*
