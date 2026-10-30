@@ -1,6 +1,16 @@
 import { DataSource } from 'typeorm';
 import { CreateWalletTable1761690000000 } from '../../src/infrastructure/database/migrations/001-Create_table_wallet';
+import { CreateWagerTransactionTable1761690001000 } from '../../src/infrastructure/database/migrations/002-Create_table_wager_transaction';
+import { CreateWalletLedgerEntryTable1761690002000 } from '../../src/infrastructure/database/migrations/003-Create_table_wallet_ledger_entry';
+import { CreateOutboxMessageTable1761690003000 } from '../../src/infrastructure/database/migrations/004-Create_table_outbox_message';
 import { databaseEnv } from '../../src/infrastructure/database/env';
+
+export const ALL_MIGRATIONS = [
+  CreateWalletTable1761690000000,
+  CreateWagerTransactionTable1761690001000,
+  CreateWalletLedgerEntryTable1761690002000,
+  CreateOutboxMessageTable1761690003000,
+] as const;
 
 export function createMigrationDataSource(): DataSource {
   return new DataSource({
@@ -12,7 +22,7 @@ export function createMigrationDataSource(): DataSource {
     database: databaseEnv.database,
     synchronize: false,
     logging: false,
-    migrations: [CreateWalletTable1761690000000],
+    migrations: [...ALL_MIGRATIONS],
     migrationsTableName: 'migrations',
   });
 }

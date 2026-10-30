@@ -59,6 +59,12 @@ describe('wallet migrations (e2e ida e volta)', () => {
     }
   }
 
+  async function undoUntilWalletRemoved(): Promise<void> {
+    while (await tableExists('wallet')) {
+      await dataSource.undoLastMigration();
+    }
+  }
+
   beforeAll(async () => {
     dataSource = createMigrationDataSource();
     await dataSource.initialize();
@@ -72,24 +78,33 @@ describe('wallet migrations (e2e ida e volta)', () => {
     }
   });
 
-  it('reverte (down) e remove a tabela wallet', async () => {
+  it('reverte dependentes e remove a tabela wallet', async () => {
     expect(await tableExists('wallet')).toBe(true);
 
-    await dataSource.undoLastMigration();
+    await undoUntilWalletRemoved();
 
     expect(await tableExists('wallet')).toBe(false);
+    expect(await tableExists('wager_transaction')).toBe(false);
+    expect(await tableExists('wallet_ledger_entry')).toBe(false);
+    expect(await tableExists('outbox_message')).toBe(false);
     expect(
       await migrationIsRecorded('CreateWalletTable1761690000000'),
     ).toBe(false);
   });
 
-  it('aplica de novo (up) e recria wallet com colunas esperadas', async () => {
+  it('aplica de novo (up) e recria wallet e migrations financeiras', async () => {
     const applied = await dataSource.runMigrations();
 
     expect(applied.map((migration) => migration.name)).toEqual([
       'CreateWalletTable1761690000000',
+      'CreateWagerTransactionTable1761690001000',
+      'CreateWalletLedgerEntryTable1761690002000',
+      'CreateOutboxMessageTable1761690003000',
     ]);
     expect(await tableExists('wallet')).toBe(true);
+    expect(await tableExists('wager_transaction')).toBe(true);
+    expect(await tableExists('wallet_ledger_entry')).toBe(true);
+    expect(await tableExists('outbox_message')).toBe(true);
     expect(
       await migrationIsRecorded('CreateWalletTable1761690000000'),
     ).toBe(true);

@@ -22,9 +22,18 @@ Sempre documentar quando houver uma atualização em teste neste arquivo.
 
 ```bash
 bun run test:unit -- wallet.entity
+bun run test:unit -- wallet.mapper
+bun run test:unit -- get-wallet-balance
+bun run test:unit -- wager-transaction
+bun run test:unit -- wallet-ledger-entry
+bun run test:unit -- outbox-message.migration
 bun run test:unit -- wallet.migration
 bun run test:e2e -- wallet.constraints
+bun run test:e2e -- wager-transaction.constraints
+bun run test:e2e -- wallet-ledger-entry.constraints
+bun run test:e2e -- outbox-message.constraints
 bun run test:e2e -- wallet.migration
+bun run test:e2e -- wallet.repository
 ```
 
 ## Organização
@@ -32,29 +41,56 @@ bun run test:e2e -- wallet.migration
 ```
 test/
   helpers/
-    db.ts                      # conexão Postgres + insertWallet
-    migration-data-source.ts   # DataSource TypeORM para testes de migration
+    db.ts                      # Postgres + insertWallet/tx/ledger/outbox
+    migration-data-source.ts   # DataSource TypeORM com migrations 001–004
   money/
     money.spec.ts              # unit: precisão e moeda em Money.from
+  outbox/
+    outbox-message.migration.spec.ts      # unit: SQL up/down outbox
+    outbox-message.constraints.e2e-spec.ts # e2e: imutabilidade + campos operacionais
+  wager-transaction/
+    wager-transaction.entity.spec.ts      # unit: OPENING/PROCESSED
+    wager-transaction.migration.spec.ts   # unit: SQL up/down wager_transaction
+    wager-transaction.constraints.e2e-spec.ts # e2e: status, amount, idempotência, moeda
+  wallet-ledger/
+    wallet-ledger-entry.entity.spec.ts    # unit: CREDIT/DEBIT, saldos, imutabilidade
+    wallet-ledger-entry.migration.spec.ts # unit: SQL up/down ledger
+    wallet-ledger-entry.constraints.e2e-spec.ts # e2e: moeda, LOSS, UPDATE/DELETE
   wallet/
-    wallet.entity.spec.ts           # unit: criação/validação da entidade
-    wallet.constraints.e2e-spec.ts  # e2e: constraints da tabela wallet
-    wallet.migration.spec.ts        # unit: SQL up/down da migration
-    wallet.migration.e2e-spec.ts    # e2e: ida e volta (revert + run)
+    wallet.entity.spec.ts                # unit: criação/validação da entidade
+    wallet.mapper.spec.ts                # unit: mapeamento domínio ↔ ORM
+    get-wallet-balance.use-case.spec.ts  # unit: consulta de saldo (repo fake)
+    wallet.repository.e2e-spec.ts        # e2e: save/findById no Postgres
+    wallet.constraints.e2e-spec.ts       # e2e: constraints da tabela wallet
+    wallet.migration.spec.ts             # unit: SQL up/down da migration
+    wallet.migration.e2e-spec.ts         # e2e: ida e volta 001–004
   app.e2e-spec.ts
   jest-unit.json
   jest-e2e.json
 ```
 
-## Suíte atual — money / wallet
+## Suíte atual — money / wallet / financeiro (domínio)
 
 | Arquivo | Tipo | Cobre |
 |---------|------|-------|
 | `money/money.spec.ts` | unit | `Money.from`: escala ≤2 casas, rejeição de `number`, moedas inválidas/normalização |
 | `wallet.entity.spec.ts` | unit | `Wallet.open` / `rehydrate`: version=1, saldo `Money`, rejeição de saldo negativo e ids inválidos |
+| `wallet.mapper.spec.ts` | unit | `WalletMapper` toPersistence/toDomain e round-trip sem `number` |
+| `get-wallet-balance.use-case.spec.ts` | unit | `GetWalletBalanceUseCase`: encontrada / inexistente (InMemoryWalletRepository) |
+| `wager-transaction.entity.spec.ts` | unit | `WagerTransaction.openingProcessed`: OPENING/PROCESSED, amount positivo Money |
+| `wallet-ledger-entry.entity.spec.ts` | unit | `credit`/`debit`/`rehydrate`: equação de saldo, moedas, `balanceAfter` negativo, freeze + Date defensivo |
+| `wager-transaction.migration.spec.ts` | unit | `up`/`down` da `CreateWagerTransactionTable` |
+| `wallet-ledger-entry.migration.spec.ts` | unit | `up`/`down` da `CreateWalletLedgerEntryTable` |
+| `outbox-message.migration.spec.ts` | unit | `up`/`down` da `CreateOutboxMessageTable` |
+| `wager-transaction.constraints.e2e-spec.ts` | e2e | status oficiais (+ inválido), amount por kind, idempotência/id externo por provedor, moeda |
+| `wallet-ledger-entry.constraints.e2e-spec.ts` | e2e | moeda, bloqueio LOSS, UPDATE/DELETE imutáveis |
+| `outbox-message.constraints.e2e-spec.ts` | e2e | payload/campos imutáveis; UPDATE operacional; DELETE não restringido pelo contrato |
+| `wallet.repository.e2e-spec.ts` | e2e | `TypeOrmWalletRepository.save` / `findById` com Postgres real |
 | `wallet.constraints.e2e-spec.ts` | e2e | CHECK, UNIQUE, PK, NOT NULL |
 | `wallet.migration.spec.ts` | unit | `up`/`down` da `CreateWalletTable` |
-| `wallet.migration.e2e-spec.ts` | e2e | revert remove tabela; run recria e registra em `migrations` |
+| `wallet.migration.e2e-spec.ts` | e2e | revert em cascata 004→001; run recria 001–004 |
+
+> DELETE em `outbox_message`: contrato não exige bloqueio; migration e testes não inventam essa regra.
 
 ## Requisitos por feature
 

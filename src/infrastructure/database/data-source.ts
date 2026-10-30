@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
+import { WalletOrmEntity } from '../repository/wallet/wallet.orm-entity';
 import { databaseEnv } from './env';
 
 export default new DataSource({
@@ -11,7 +12,7 @@ export default new DataSource({
   database: databaseEnv.database,
   synchronize: false,
   logging: process.env.TYPEORM_LOGGING === 'true',
-  entities: [__dirname + '/../../**/*.entity{.ts,.js}'],
+  entities: [WalletOrmEntity],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
   migrationsTableName: 'migrations',
 });
