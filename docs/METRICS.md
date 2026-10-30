@@ -1,5 +1,7 @@
 # Métricas Prometheus (Fase D)
 
+Operação / diagnóstico: [`OPS_RUNBOOK.md`](OPS_RUNBOOK.md) · Outbox pausado: [`OUTBOX_INTERVENTION_RUNBOOK.md`](OUTBOX_INTERVENTION_RUNBOOK.md).
+
 ## Subir e acessar
 
 ```bash

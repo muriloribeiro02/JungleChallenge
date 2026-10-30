@@ -6,25 +6,45 @@ Política obrigatória (unitário + e2e + doc): ver [`skills/AGENTS.md`](../skil
 
 Sempre documentar quando houver uma atualização em teste neste arquivo.
 
+## Suítes (diferencie antes de rodar)
+
+| Suíte | Script (`package.json`) | Precisa Postgres? | Precisa LocalStack? | Precisa `apps:up`? |
+|-------|-------------------------|-------------------|---------------------|--------------------|
+| Unitário | `bun run test:unit` | Não (fakes) | Não | Não |
+| E2E | `bun run test:e2e` | **Sim** (maioria) | Sim se o arquivo tocar SQS (`*sqs*`, inbound) | **Não** — preferir `apps:down` |
+| Messaging | `bun run test:messaging` | **Sim** | **Sim** | **Não** — **obrigatório `apps:down`** |
+| Multi-instância | `bun run test:multi-instance` | **Sim** | **Sim** | **Sim** |
+| `test:all` | `test:unit` + `test:e2e` | Indireto (e2e) | Indireto | Não inclui multi-instance |
+
+> **Aviso em destaque**  
+> Antes de `bun run test:messaging` (e de e2e SQS em geral), execute `bun run apps:down`.  
+> Os containers `app-1..3` têm `WORKERS_ENABLED=true` e **consomem as mesmas filas** LocalStack que os testes. Deixar apps UP causa flake (mensagem some / claimed=0).
+
+Migrations usadas pelos helpers/e2e de schema: lista em `test/helpers/migration-data-source.ts` (`ALL_MIGRATIONS`) — de `001-Create_table_wallet` até `OutboxInterventionFields1793389000000` (15 migrations).
+
 ## Scripts
+
+Fonte: `package.json` → `scripts`.
 
 | Script | Comando | O que faz |
 |--------|---------|-----------|
-| `test` | `bun run test` | Atalho legado do Nest: roda specs em `src/` (`*.spec.ts`) |
-| `test:unit` | `bun run test:unit` | Roda testes **unitários** em `test/**/*.spec.ts` |
-| `test:e2e` | `bun run test:e2e` | Roda testes **e2e** em `test/**/*.e2e-spec.ts` (pode usar Postgres) |
-| `test:all` | `bun run test:all` | Roda unitários e e2e em sequência |
-| `test:messaging` | `bun run test:messaging` | E2E mensageria: Postgres + LocalStack SQS (`messaging.sqs`) |
-| `test:multi-instance` | `bun run test:multi-instance` | 3 containers `app-1..3` (HTTP + workers reais) |
-| `apps:up` / `apps:down` | `bun run apps:up` | Sobe/para app-1..3 |
-| `ops:clear-outbox-intervention` | `bun run ops:clear-outbox-intervention -- <uuid>` | CLI ops: libera outbox pausado (sem HTTP) |
-| (filtro) | `bun run test:e2e -- http.api` | E2E HTTP Nest + Postgres (supertest) |
-| (filtro) | `bun run test:unit -- metrics` | Unit métricas / instrumentação |
-| (filtro) | `bun run test:e2e -- metrics` | E2E `GET /metrics` + submit |
-| (filtro) | `bun run test:multi-instance -- prometheus` | Scrape real Prometheus ↔ app-1..3 |
-| `test:watch` | `bun run test:watch` | Jest em modo watch (specs em `src/`) |
-| `test:cov` | `bun run test:cov` | Cobertura dos specs em `src/` |
-| `test:debug` | `bun run test:debug` | Jest com inspector Node para debug |
+| `test` | `bun run test` | Atalho legado do Nest: specs em `src/` (`*.spec.ts`) |
+| `test:unit` | `bun run test:unit` | Unitários `test/**/*.spec.ts` (`jest-unit.json`) |
+| `test:e2e` | `bun run test:e2e` | E2E `test/**/*.e2e-spec.ts` exceto `multi-instance/` |
+| `test:all` | `bun run test:all` | `test:unit` && `test:e2e` |
+| `test:messaging` | `bun run test:messaging` | Jest e2e filtrado `messaging.sqs` |
+| `test:multi-instance` | `bun run test:multi-instance` | `jest-multi-instance.json` |
+| `apps:up` | `bun run apps:up` | build `app-1` + up `app-1..3` |
+| `apps:down` | `bun run apps:down` | `docker compose stop app-1 app-2 app-3` |
+| `ops:clear-outbox-intervention` | `bun run ops:clear-outbox-intervention -- <uuid>` | CLI ops Outbox (não é teste) |
+| `migration:run` / `revert` / `show` | `bun run migration:*` | Schema via profile `migrate` |
+| (filtro) | `bun run test:e2e -- http.api` | E2E HTTP Nest + Postgres |
+| (filtro) | `bun run test:unit -- metrics` | Unit métricas |
+| (filtro) | `bun run test:e2e -- metrics` | E2E `/metrics` |
+| (filtro) | `bun run test:multi-instance -- prometheus` | Scrape Prometheus |
+| `test:watch` | `bun run test:watch` | Watch (config Jest raiz / `src/`) |
+| `test:cov` | `bun run test:cov` | Cobertura specs `src/` |
+| `test:debug` | `bun run test:debug` | Jest + inspector |
 
 ### Filtrar por nome
 
@@ -68,7 +88,7 @@ bun run test:e2e -- wallet.repository
 test/
   helpers/
     db.ts                      # Postgres + insertWallet/tx/ledger/outbox
-    migration-data-source.ts   # DataSource TypeORM com migrations 001–010
+    migration-data-source.ts   # DataSource TypeORM — ALL_MIGRATIONS (001 → OutboxIntervention)
   metrics/
     prometheus-metrics.spec.ts            # unit: counters/histograms/safeMetrics/cache
     metrics-instrumentation.spec.ts       # unit: Submit/Inbox/Outbox → métricas
@@ -136,9 +156,11 @@ test/
     wallet.repository.e2e-spec.ts        # e2e: save/findById no Postgres
     wallet.constraints.e2e-spec.ts       # e2e: constraints da tabela wallet
     wallet.migration.spec.ts             # unit: SQL up/down da migration
-    wallet.migration.e2e-spec.ts         # e2e: ida e volta 001–011
+    wallet.migration.e2e-spec.ts         # e2e: revert cascata + run (inclui AlignMonetary + OutboxIntervention)
+  multi-instance/                        # fora do test:e2e — ver seção Multi-instância
   jest-unit.json
   jest-e2e.json
+  jest-multi-instance.json
 ```
 
 ## Suíte atual — money / wallet / financeiro (domínio)
@@ -195,7 +217,7 @@ test/
 | `wallet.repository.e2e-spec.ts` | e2e | `TypeOrmWalletRepository.save` / `findById` com Postgres real |
 | `wallet.constraints.e2e-spec.ts` | e2e | `numeric(19,2)`; CHECK negativo (≥0.01), UNIQUE, PK, NOT NULL |
 | `wallet.migration.spec.ts` | unit | `up`/`down` da `CreateWalletTable` |
-| `wallet.migration.e2e-spec.ts` | e2e | revert em cascata →001; run recria incluindo `AlignMonetaryNumericScaleNineteenTwo` |
+| `wallet.migration.e2e-spec.ts` | e2e | revert cascata →001; run recria até `OutboxInterventionFields1793389000000` |
 
 ```bash
 bun run test:unit -- wager-transaction-result-snapshot.migration
@@ -224,7 +246,7 @@ Toda feature nova precisa de:
 
 ## Mensageria (Outbox / Inbox / SQS)
 
-Pré-requisito: `docker compose up -d postgres localstack` e `bun run migration:run`.
+Pré-requisito: `docker compose up -d postgres localstack`, `bun run migration:run`, e **`bun run apps:down`**.
 
 | Arquivo | Tipo | Cobre |
 |---------|------|-------|

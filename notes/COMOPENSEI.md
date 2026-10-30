@@ -1,3 +1,5 @@
+<!-- Notas internas de desenvolvimento — não substituem ARCHITECTURE.md / README. -->
+
 1 - Iniciei o projeto criando a tabela "wallet", com as colunas:
 id (uuid gerado pela aplicação), 
 player id(uuid do jogador), 
