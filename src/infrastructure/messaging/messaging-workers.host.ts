@@ -12,10 +12,12 @@ import {
   markShutdownStopping,
   resetShutdownGate,
 } from '../../application/messaging/shutdown-gate';
+import { shutdownTestHoldMs } from '../../application/messaging/shutdown-test-hold';
 import {
   APP_COMPOSITION,
   type AppCompositionToken,
 } from '../../composition/tokens';
+import { optionalPositiveInt } from '../../shared/parse-env-int';
 
 /**
  * Loops de Outbox / Inbox / Inbound / Pending por processo.
@@ -58,24 +60,36 @@ export class MessagingWorkersHost
     resetShutdownGate();
     this.stopped = false;
 
+    // Valida intervalos/drain/hold na init (antes dos timers), mesmo com workers off.
+    const outboxMs = positiveInt(
+      'WORKER_OUTBOX_INTERVAL_MS',
+      process.env.WORKER_OUTBOX_INTERVAL_MS,
+      500,
+    );
+    const inboxMs = positiveInt(
+      'WORKER_INBOX_INTERVAL_MS',
+      process.env.WORKER_INBOX_INTERVAL_MS,
+      500,
+    );
+    const inboundMs = positiveInt(
+      'WORKER_INBOUND_INTERVAL_MS',
+      process.env.WORKER_INBOUND_INTERVAL_MS,
+      500,
+    );
+    const pendingMs = positiveInt(
+      'WORKER_PENDING_INTERVAL_MS',
+      process.env.WORKER_PENDING_INTERVAL_MS,
+      1000,
+    );
+    void shutdownDrainMs();
+    // Mesmo helper de applyShutdownTestHoldIfConfigured — falha cedo se inválido.
+    void shutdownTestHoldMs();
+
     if (!workersEnabled()) {
       this.logger.log('Workers desabilitados (WORKERS_ENABLED≠true)');
       return;
     }
 
-    const outboxMs = positiveInt(
-      process.env.WORKER_OUTBOX_INTERVAL_MS,
-      500,
-    );
-    const inboxMs = positiveInt(process.env.WORKER_INBOX_INTERVAL_MS, 500);
-    const inboundMs = positiveInt(
-      process.env.WORKER_INBOUND_INTERVAL_MS,
-      500,
-    );
-    const pendingMs = positiveInt(
-      process.env.WORKER_PENDING_INTERVAL_MS,
-      1000,
-    );
     const instanceId = process.env.INSTANCE_ID ?? `pid-${process.pid}`;
 
     this.logger.log(
@@ -262,7 +276,7 @@ export function workersEnabled(): boolean {
 }
 
 export function shutdownDrainMs(): number {
-  return positiveInt(process.env.SHUTDOWN_DRAIN_MS, 10_000);
+  return positiveInt('SHUTDOWN_DRAIN_MS', process.env.SHUTDOWN_DRAIN_MS, 10_000);
 }
 
 /** Aguarda promises em voo ou estoura o timeout. `true` = drenou tudo. */
@@ -293,7 +307,10 @@ export async function waitForInFlight(
   return !timedOut;
 }
 
-export function positiveInt(raw: string | undefined, fallback: number): number {
-  const n = Number(raw ?? fallback);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+export function positiveInt(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+): number {
+  return optionalPositiveInt(name, raw, fallback);
 }

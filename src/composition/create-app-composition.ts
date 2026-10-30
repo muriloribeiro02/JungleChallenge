@@ -11,6 +11,7 @@ import type {
 } from '../application/ports/metrics';
 import type { MessagingLogger } from '../application/ports/messaging-logger';
 import type { UnitOfWork } from '../application/ports/unit-of-work';
+import { loadPendingReferenceWorkerEnv } from '../infrastructure/config/pending-reference-worker.env';
 import { TypeOrmSqsDependencyHealth } from '../infrastructure/health/typeorm-sqs-dependency-health';
 import { GetWalletUseCase } from '../application/use-cases/wallet/get-wallet.use-case';
 import { GetWalletBalanceUseCase } from '../application/use-cases/wallet/get-wallet-balance.use-case';
@@ -100,13 +101,14 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
   const refundWager = new RefundWagerUseCase(unitOfWork);
   const rollbackWager = new RollbackWagerUseCase(unitOfWork);
   const reprocessPending = new ReprocessPendingReferencesUseCase(unitOfWork);
+  const pendingWorkerEnv = loadPendingReferenceWorkerEnv();
   const processPendingReferences = new ProcessPendingReferencesUseCase(
     unitOfWork,
     reprocessPending,
     logger,
     {
-      batchSize: Number(process.env.PENDING_REFERENCE_BATCH_SIZE ?? 10),
-      leaseSeconds: Number(process.env.PENDING_REFERENCE_LEASE_SECONDS ?? 30),
+      batchSize: pendingWorkerEnv.batchSize,
+      leaseSeconds: pendingWorkerEnv.leaseSeconds,
     },
     metrics,
   );

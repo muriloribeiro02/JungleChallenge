@@ -22,6 +22,7 @@ describe('Graceful shutdown (C3) — MessagingWorkersHost', () => {
     'WORKER_INBOUND_INTERVAL_MS',
     'WORKER_PENDING_INTERVAL_MS',
     'SHUTDOWN_DRAIN_MS',
+    'SHUTDOWN_TEST_HOLD_MS',
   ] as const;
   const original: Record<string, string | undefined> = {};
 
@@ -94,6 +95,61 @@ describe('Graceful shutdown (C3) — MessagingWorkersHost', () => {
   it('shutdownDrainMs lê SHUTDOWN_DRAIN_MS', () => {
     process.env.SHUTDOWN_DRAIN_MS = '2500';
     expect(shutdownDrainMs()).toBe(2500);
+  });
+
+  it('SHUTDOWN_TEST_HOLD_MS ausente/0/positivo: onModuleInit ok sem timers se workers off', () => {
+    process.env.WORKERS_ENABLED = 'false';
+    delete process.env.SHUTDOWN_TEST_HOLD_MS;
+    const publishBatch = jest.fn();
+    const hostAbsent = makeHost({ publishBatch });
+    expect(() => hostAbsent.onModuleInit()).not.toThrow();
+    hostAbsent.onModuleDestroy();
+
+    process.env.SHUTDOWN_TEST_HOLD_MS = '0';
+    const hostZero = makeHost({ publishBatch });
+    expect(() => hostZero.onModuleInit()).not.toThrow();
+    hostZero.onModuleDestroy();
+
+    process.env.SHUTDOWN_TEST_HOLD_MS = '40';
+    const hostPos = makeHost({ publishBatch });
+    expect(() => hostPos.onModuleInit()).not.toThrow();
+    hostPos.onModuleDestroy();
+
+    expect(publishBatch).not.toHaveBeenCalled();
+  });
+
+  it('SHUTDOWN_TEST_HOLD_MS inválido: onModuleInit falha antes de timers/processamento', async () => {
+    process.env.WORKERS_ENABLED = 'true';
+    process.env.WORKER_OUTBOX_INTERVAL_MS = '15';
+    process.env.WORKER_INBOX_INTERVAL_MS = '15';
+    process.env.WORKER_INBOUND_INTERVAL_MS = '15';
+    process.env.WORKER_PENDING_INTERVAL_MS = '15';
+    process.env.SHUTDOWN_TEST_HOLD_MS = '-1';
+
+    const publishBatch = jest.fn().mockResolvedValue({
+      claimed: 0,
+      published: 0,
+      failed: 0,
+    });
+    const inboxPoll = jest.fn().mockResolvedValue({
+      received: 0,
+      processed: 0,
+      duplicates: 0,
+      failed: 0,
+    });
+    const host = makeHost({ publishBatch, inboxPoll });
+
+    expect(() => host.onModuleInit()).toThrow(/SHUTDOWN_TEST_HOLD_MS/);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(publishBatch).not.toHaveBeenCalled();
+    expect(inboxPoll).not.toHaveBeenCalled();
+
+    process.env.SHUTDOWN_TEST_HOLD_MS = 'abc';
+    const hostText = makeHost({ publishBatch, inboxPoll });
+    expect(() => hostText.onModuleInit()).toThrow(/SHUTDOWN_TEST_HOLD_MS/);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(publishBatch).not.toHaveBeenCalled();
+    expect(inboxPoll).not.toHaveBeenCalled();
   });
 
   it('A) SIGTERM com workers ociosos — drain imediato, sem novo poll', async () => {

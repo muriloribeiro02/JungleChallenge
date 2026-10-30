@@ -21,11 +21,26 @@ Documentos relacionados:
 | Inbound FIFO | `jungle-wager-transactions.fifo` |
 | Inbound DLQ | `jungle-wager-transactions-dlq.fifo` |
 | URLs no `.env.example` | `SQS_*_QUEUE_URL` / `SQS_*_DLQ_URL` |
-| `SQS_MAX_RECEIVE_COUNT` | Fonte única (default **5**): Compose → LocalStack `init-sqs.sh` + `sqsEnv` na app |
+| `SQS_MAX_RECEIVE_COUNT` | Fonte única (default **código/Compose 5**): LocalStack `init-sqs.sh` + `sqsEnv` |
 | Redrive efetivo | `set-queue-attributes` no init (idempotente; atualiza fila já existente) |
-| Visibility | `30s` (`SQS_VISIBILITY_TIMEOUT_SECONDS`) |
-| Outbox lease | `OUTBOX_CLAIM_LEASE_SECONDS` (default 60) |
+| Visibility | Default código **30s** (`SQS_VISIBILITY_TIMEOUT_SECONDS`, AWS 0–43200) |
+| Outbox lease | `OUTBOX_CLAIM_LEASE_SECONDS` (default código **60**) |
+| Pending lease | Default código **30s**; Compose `app-*` sobrescreve com **15s** (não é o default do código) |
+| Worker intervals | Default código Outbox/Inbox/Inbound **500ms**, Pending **1000ms**; Compose `app-*` usa **400ms** / Pending **300ms** |
 | Clear Outbox | `bun run ops:clear-outbox-intervention -- <uuid>` |
+| Só teste | `SHUTDOWN_TEST_HOLD_MS`, `MULTI_INSTANCE_URL_*`, `PROMETHEUS_URL` — ver `.env.example` |
+
+### Defaults do código × override Compose
+
+| Variável | Default no código | Valor nos `app-*` (Compose) |
+|----------|-------------------|-----------------------------|
+| `WORKER_OUTBOX_INTERVAL_MS` / `INBOX` / `INBOUND` | 500 | 400 |
+| `WORKER_PENDING_INTERVAL_MS` | 1000 | 300 |
+| `PENDING_REFERENCE_LEASE_SECONDS` | 30 | 15 |
+| `PENDING_REFERENCE_BATCH_SIZE` | 10 | 10 |
+| `SHUTDOWN_DRAIN_MS` | 10000 | `${SHUTDOWN_DRAIN_MS:-10000}` |
+
+O lease de pending **30s** é o fallback da aplicação; **15s** no Compose acelera recuperação entre instâncias no lab local — documente o override, não o chame de “padrão do sistema”. O mesmo vale para intervalos **500ms** (código) vs **400ms** (Compose).
 
 `awslocal` é o CLI usado **dentro** da imagem LocalStack (`docker/localstack/init-sqs.sh`). No host, use `docker exec jungle-localstack awslocal …`.
 
@@ -181,7 +196,8 @@ Comportamento (código + ARCHITECTURE):
 
 - TTL **24h** a partir de `pending_reference_at`.
 - Backoff: `next_attempt_at = now + min(300, 2^n)` s; `n = pending_attempt_count` incrementa no **defer**, não no claim.
-- Worker periódico: `ProcessPendingReferencesUseCase` (intervalo `WORKER_PENDING_INTERVAL_MS` nos `app-*`).
+- Worker periódico: `ProcessPendingReferencesUseCase` (intervalo: default código **1000ms**; nos `app-*` Compose usa **300ms**).
+- Claim pending: batch default **10**; lease default código **30s** (Compose `app-*`: **15s**).
 - Gatilho Inbox: `DomainEventHandler` em `WagerTransactionProcessed` (BET/WIN/REFUND/ROLLBACK) chama `ReprocessPendingReferencesUseCase` na mesma UoW do Inbox (`externalReference` = `externalTransactionId` da tx processada). LOSS/OPENING não disparam esse caminho.
 - Expiração → `REJECTED` + `failure_code = REFERENCE_NOT_FOUND` + evento Outbox.
 

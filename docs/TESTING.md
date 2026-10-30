@@ -103,7 +103,11 @@ test/
     typeorm-sqs-dependency-health.spec.ts # unit: PG/SQS via checkAvailable; nunca chama receive
     sqs-message-bus.check-available.spec.ts # unit: GetQueueAttributes QueueArn ok/falha
     init-sqs.redrive.spec.ts              # unit: contrato init-sqs.sh + SQS_MAX_RECEIVE_COUNT
+    sqs.env.spec.ts                       # unit: loadSqsEnv defaults + rejeição numérica AWS
+    pending-reference-worker.env.spec.ts  # unit: pending/batch/lease + worker/drain/hold
+    env-config.bootstrap.e2e-spec.ts      # e2e: Nest sobe com loaders; subprocess rejeita WaitTime inválido
   shared/
+    parse-env-int.spec.ts                 # unit: optionalPositiveInt / range / nonNegative
     money-limits.spec.ts                  # unit: isMoneyAmountWithinMaxAbs
   messaging/
     outbox-publisher.use-case.spec.ts     # unit: backoff / markPublished (ports)
@@ -177,6 +181,10 @@ test/
 | `infrastructure/typeorm-sqs-dependency-health.spec.ts` | unit | adapter: `checkAvailable` (não `receive`); PG/SQS fail |
 | `infrastructure/sqs-message-bus.check-available.spec.ts` | unit | `GetQueueAttributes` QueueArn; rejeita sem ARN / SDK error |
 | `infrastructure/init-sqs.redrive.spec.ts` | unit | init-sqs.sh: `SQS_MAX_RECEIVE_COUNT`, set-queue-attributes, sem literal 5 |
+| `infrastructure/sqs.env.spec.ts` | unit | `loadSqsEnv`: defaults código; WaitTime 0–20; MaxMessages 1–10; sem fallback inválido |
+| `infrastructure/pending-reference-worker.env.spec.ts` | unit | pending batch/lease; `WORKER_PENDING_INTERVAL_MS`; drain; `SHUTDOWN_TEST_HOLD_MS` (0/+/inválido) |
+| `infrastructure/env-config.bootstrap.e2e-spec.ts` | e2e | AppModule init + loaders; subprocess falha com `SQS_RECEIVE_WAIT_SECONDS` inválido |
+| `shared/parse-env-int.spec.ts` | unit | parsers: ausente→default; inválido→erro com nome da var |
 | `messaging/init-sqs-redrive.e2e-spec.ts` | e2e | Redrive = `sqsEnv.maxReceiveCount`; idempotente; atualiza policy antiga; DLQ sem redrive |
 | `api/health.e2e-spec.ts` | e2e | ready 200/503; spy sem `receive`; NotVisible estável após probes; live stopping |
 | `api/http.api.e2e-spec.ts` | e2e | REST §9; 202; race REFUND×ROLLBACK HTTP 200+REJECTED; saldo/ledger/reconciliação; 404; 409; magnitude 400 |
@@ -259,7 +267,7 @@ Pré-requisito: `docker compose up -d postgres localstack`, `bun run migration:r
 | `messaging/outbox-publisher.use-case.spec.ts` | unit | backoff `next_attempt_at`, API do publisher |
 | `messaging/inbox-consumer.use-case.spec.ts` | unit | inbox nova, duplicata+ACK por `(consumerName, id)`, falha sem ACK + `changeVisibility(0)` |
 | `messaging/messaging-workers.host.spec.ts` | unit | flag `WORKERS_ENABLED`; ticks outbox/inbox/inbound/pending |
-| `messaging/graceful-shutdown.spec.ts` | unit | C3: ocioso; drain outbox/inbox/inbound/pending; timeout `SHUTDOWN_DRAIN_MS`; sem poll pós-stop |
+| `messaging/graceful-shutdown.spec.ts` | unit | C3: ocioso; drain; `SHUTDOWN_TEST_HOLD_MS` validado no `onModuleInit` antes de timers; timeout drain; sem poll pós-stop |
 | `messaging/shutdown-abandon-visibility.spec.ts` | unit | abandon sem ACK + VT=0; Host drain_timeout libera receipts |
 | `messaging/inbound-wager-consumer.use-case.spec.ts` | unit | parse envelope; processa; duplicata; money number sem ACK |
 | `messaging/messaging.migration.spec.ts` | unit | SQL up 009 (`locked_until`) e 010 (`inbox_message`) |

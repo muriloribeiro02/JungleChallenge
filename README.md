@@ -26,20 +26,40 @@ bun install
 cp .env.example .env   # se ainda não existir
 ```
 
-Variáveis principais (ver `.env.example`):
+Variáveis principais (ver `.env.example`).  
+**Não trate override do Docker Compose como “padrão universal”** — a coluna *Default código* é o fallback da aplicação; *Compose `app-*`* é o valor injetado nos containers.
 
-| Variável | Exemplo | Uso |
+| Variável | Default código | Compose `app-*` | Uso |
+|----------|----------------|-----------------|-----|
+| `DATABASE_PORT` | `5434` (example) | — | Porta publicada do Postgres no host |
+| `DATABASE_*` | ver `.env.example` | mesma rede Compose | Credenciais PG |
+| `AWS_ENDPOINT_URL` | `http://localhost:4566` | `http://localstack:4566` | LocalStack |
+| `SQS_*_QUEUE_URL` / `SQS_*_DLQ_URL` | host `localhost:4566` | host interno LocalStack | Filas events/inbound |
+| `WORKERS_ENABLED` | `false` | `true` | Loops Outbox/Inbox/Inbound/Pending |
+| `WORKER_OUTBOX_INTERVAL_MS` | **500** | **400** | Intervalo do publisher Outbox |
+| `WORKER_INBOX_INTERVAL_MS` | **500** | **400** | Intervalo do Inbox (domain events) |
+| `WORKER_INBOUND_INTERVAL_MS` | **500** | **400** | Intervalo do consumer inbound FIFO |
+| `WORKER_PENDING_INTERVAL_MS` | **1000** | **300** | Intervalo do worker PENDING_REFERENCE |
+| `PENDING_REFERENCE_BATCH_SIZE` | **10** | **10** | Batch do claim SKIP LOCKED |
+| `PENDING_REFERENCE_LEASE_SECONDS` | **30** | **15** | Lease do claim pending (Compose mais curto de propósito) |
+| `OUTBOX_CLAIM_LEASE_SECONDS` | `60` | (herda env / default código) | Lease do claim Outbox |
+| `OUTBOX_PUBLISHER_BATCH_SIZE` | `10` | — | Batch do publisher |
+| `SQS_MAX_RECEIVE_COUNT` | `5` | `5` (também no LocalStack init) | Fonte única: `sqsEnv` + RedrivePolicy |
+| `SQS_VISIBILITY_TIMEOUT_SECONDS` | `30` (0–43200) | — | Visibility SQS |
+| `SQS_RECEIVE_WAIT_SECONDS` | `1` (0–20 AWS) | — | Long poll ReceiveMessage |
+| `SQS_RECEIVE_MAX_MESSAGES` | `10` (1–10 AWS) | — | MaxNumberOfMessages |
+| `SHUTDOWN_DRAIN_MS` | **10000** | `${SHUTDOWN_DRAIN_MS:-10000}` | Timeout de drenagem no SIGTERM |
+| `TYPEORM_LOGGING` | `false` | — | Debug: log de queries TypeORM |
+
+Variáveis **exclusivas de testes** (não são config de runtime de produção):
+
+| Variável | Default | Uso |
 |----------|---------|-----|
-| `DATABASE_PORT` | `5434` | Porta publicada do Postgres no host |
-| `DATABASE_*` | user/senha/db | Credenciais PG |
-| `AWS_ENDPOINT_URL` | `http://localhost:4566` | LocalStack |
-| `SQS_MAIN_QUEUE_URL` | `…/jungle-wager-events` | Outbox → domain events |
-| `SQS_DLQ_URL` | `…/jungle-wager-events-dlq` | DLQ events |
-| `SQS_INBOUND_QUEUE_URL` | `…/jungle-wager-transactions.fifo` | Inbound apostas |
-| `SQS_INBOUND_DLQ_URL` | `…/jungle-wager-transactions-dlq.fifo` | DLQ inbound |
-| `WORKERS_ENABLED` | `false` no `.env` local; `true` nos `app-*` | Loops Outbox/Inbox/Inbound/Pending |
-| `OUTBOX_CLAIM_LEASE_SECONDS` | `60` | Lease do claim Outbox |
-| `SQS_MAX_RECEIVE_COUNT` | `5` | Fonte única: `sqsEnv` + RedrivePolicy no `init-sqs.sh` (Compose injeta no LocalStack; `set-queue-attributes` atualiza fila existente) |
+| `SHUTDOWN_TEST_HOLD_MS` | `0` | Hold artificial nos consumers (C3); sempre 0 fora de teste |
+| `MULTI_INSTANCE_URL_1..3` | `http://127.0.0.1:3001..3003` | Suíte multi-instance |
+| `PROMETHEUS_URL` | `http://127.0.0.1:9090` | Suíte scrape Prometheus |
+
+Valores numéricos inválidos (NaN, não inteiro, fora do intervalo) **falham na inicialização** — sem fallback silencioso.
 
 ## Subir a infraestrutura
 
