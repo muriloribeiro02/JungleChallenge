@@ -2,6 +2,8 @@ import type { OutboxMessage } from '../../domain/outbox/outbox-message.entity';
 import type { MessageBus } from '../ports/message-bus';
 import type { MessagingLogger } from '../ports/messaging-logger';
 import type { UnitOfWork } from '../ports/unit-of-work';
+import { shutdownGate } from './shutdown-gate';
+import { applyShutdownTestHoldIfConfigured } from './shutdown-test-hold';
 
 export type OutboxPublisherOptions = {
   batchSize: number;
@@ -27,10 +29,25 @@ export class OutboxPublisher {
 
   async publishBatch(): Promise<{ claimed: number; published: number; failed: number }> {
     const claimed = await this.claim();
+    // Probe C3: hold após claim (lease ativo), antes do publish/markPublished.
+    await applyShutdownTestHoldIfConfigured();
+
+    if (shutdownGate.abandonInFlight) {
+      // Abandona o batch claimado — locked_until expira; outro publisher recupera.
+      this.logger.info('outbox.batch_abandoned_shutdown', {
+        claimed: claimed.length,
+      });
+      return { claimed: claimed.length, published: 0, failed: 0 };
+    }
+
     let published = 0;
     let failed = 0;
 
     for (const message of claimed) {
+      if (shutdownGate.abandonInFlight) {
+        break;
+      }
+
       const correlationId = message.payload?.correlationId;
 
       this.logger.info('outbox.event_reserved', {
@@ -49,6 +66,12 @@ export class OutboxPublisher {
             ...(correlationId ? { correlationId } : {}),
           },
         });
+
+        if (shutdownGate.abandonInFlight) {
+          // Publicado no bus mas sem markPublished — at-least-once na recuperação.
+          failed += 1;
+          break;
+        }
 
         await this.markPublished(message.id);
         published += 1;

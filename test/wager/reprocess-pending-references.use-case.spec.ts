@@ -12,6 +12,7 @@ import type { WalletRepository } from '../../src/domain/wallet/wallet.repository
 import {
   FAILURE_CODE_INVALID_REFERENCE_TYPE,
   FAILURE_CODE_REFERENCE_ALREADY_REVERSED,
+  FAILURE_CODE_REFERENCE_NOT_FOUND,
   WagerTransaction,
 } from '../../src/domain/wager-transaction/wager-transaction.entity';
 import type { WagerTransactionRepository } from '../../src/domain/wager-transaction/wager-transaction.repository';
@@ -113,6 +114,29 @@ class FakeTx implements WagerTransactionRepository {
   }
   async findByIdForUpdate(id: string): Promise<WagerTransaction | null> {
     return this.items.find((t) => t.id === id) ?? null;
+  }
+
+  async claimDuePendingReferences(
+    limit: number,
+  ): Promise<WagerTransaction[]> {
+    const now = new Date();
+    const due = this.items.filter((t) => {
+      if (t.status !== 'PENDING_REFERENCE' || !t.pendingReferenceAt) {
+        return false;
+      }
+      if (t.lockedUntil && t.lockedUntil >= now) {
+        return false;
+      }
+      const expired =
+        now.getTime() - t.pendingReferenceAt.getTime() >= 24 * 60 * 60 * 1000;
+      const attemptDue = !t.nextAttemptAt || t.nextAttemptAt <= now;
+      return expired || attemptDue;
+    });
+    const claimed = due.slice(0, limit);
+    for (const tx of claimed) {
+      tx.applyClaimLease(new Date(now.getTime() + 30_000));
+    }
+    return claimed;
   }
 }
 
@@ -410,9 +434,10 @@ describe('ReprocessPendingReferencesUseCase', () => {
     expect(ledger.items).toHaveLength(ledgerCount);
   });
 
-  it('referência ainda ausente mantém PENDING_REFERENCE (defer)', async () => {
+  it('referência ainda ausente (caminho sem claim) incrementa attempt e agenda backoff', async () => {
     const { wallet, txs, ledger, wallets, useCase } = setup();
     const pending = seedPendingRefund(txs, wallet, randomUUID());
+    const before = Date.now();
 
     const result = await useCase.execute({
       providerId,
@@ -421,7 +446,20 @@ describe('ReprocessPendingReferencesUseCase', () => {
 
     expect(result.results[0].status).toBe('PENDING_REFERENCE');
     expect(wallets.wallet?.balance.toString()).toBe('80.00');
+    expect(pending.pendingAttemptCount).toBe(1);
+    expect(pending.nextAttemptAt).not.toBeNull();
+    expect(pending.nextAttemptAt!.getTime()).toBeGreaterThanOrEqual(
+      before + 2000,
+    );
     expect(ledger.items).toHaveLength(0);
+
+    // Segunda defer (simula Inbox/reprocess sem claim): backoff progride 2^2=4s
+    const before2 = Date.now();
+    await useCase.reprocessOne(pending.id);
+    expect(pending.pendingAttemptCount).toBe(2);
+    expect(pending.nextAttemptAt!.getTime()).toBeGreaterThanOrEqual(
+      before2 + 4000,
+    );
   });
 
   it('pendência ROLLBACK rejeitada se REFUND da mesma BET já foi processado', async () => {
@@ -515,5 +553,49 @@ describe('ReprocessPendingReferencesUseCase', () => {
     expect(result.results).toHaveLength(0);
     expect(other.status).toBe('PENDING_REFERENCE');
     expect(ledger.items).toHaveLength(0);
+  });
+
+  it('TTL expirado → REJECTED REFERENCE_NOT_FOUND + evento Outbox (sem ledger)', async () => {
+    const { wallet, txs, ledger, outbox, wallets, useCase } = setup();
+    const pending = seedPendingRefund(txs, wallet, randomUUID());
+    const expiredAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    txs.items[txs.items.length - 1] = WagerTransaction.rehydrate({
+      id: pending.id,
+      walletId: pending.walletId,
+      playerId: pending.playerId,
+      type: pending.kind,
+      status: pending.status,
+      amount: {
+        amount: pending.amount.toString(),
+        currency: pending.amount.currency,
+      },
+      providerId: pending.providerId,
+      externalTransactionId: pending.externalTransactionId,
+      idempotencyKey: pending.idempotencyKey,
+      payloadHash: pending.payloadHash,
+      roundId: pending.roundId,
+      gameId: pending.gameId,
+      failureCode: null,
+      externalReference: pending.externalReference,
+      resolvedInternalReference: null,
+      createdAt: pending.createdAt,
+      updatedAt: pending.updatedAt,
+      pendingReferenceAt: expiredAt,
+      pendingAttemptCount: 3,
+      nextAttemptAt: new Date(Date.now() + 60_000),
+    });
+
+    const result = await useCase.reprocessOne(pending.id);
+
+    expect(result.status).toBe('REJECTED');
+    expect(result.failureCode).toBe(FAILURE_CODE_REFERENCE_NOT_FOUND);
+    expect(wallets.wallet?.balance.toString()).toBe('80.00');
+    expect(ledger.items).toHaveLength(0);
+    expect(
+      outbox.items.filter((m) => m.eventType === 'WagerTransactionRejected'),
+    ).toHaveLength(1);
+    expect(outbox.items[0].payload.data.failureCode).toBe(
+      FAILURE_CODE_REFERENCE_NOT_FOUND,
+    );
   });
 });

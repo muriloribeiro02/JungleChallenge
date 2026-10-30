@@ -3,6 +3,7 @@ import { OutboxMessage as OutboxMessageEntity } from '../../../domain/outbox/out
 import type { Wallet } from '../../../domain/wallet/wallet.entity';
 import {
   FAILURE_CODE_REFERENCE_ALREADY_REVERSED,
+  FAILURE_CODE_REFERENCE_NOT_FOUND,
   WAGER_TRANSACTION_STATUS_PENDING_REFERENCE,
   WAGER_TRANSACTION_STATUS_PROCESSED,
   WAGER_TRANSACTION_STATUS_REJECTED,
@@ -11,6 +12,7 @@ import {
   type WagerFailureCode,
   type WagerTransaction,
 } from '../../../domain/wager-transaction/wager-transaction.entity';
+import { isPendingReferenceExpired } from '../../../domain/wager-transaction/pending-reference-policy';
 import { ReferenceAlreadyReversedConflictError } from '../../../domain/wager-transaction/wager-transaction.errors';
 import { WalletLedgerEntry } from '../../../domain/wallet-ledger/wallet-ledger-entry.entity';
 import {
@@ -56,10 +58,11 @@ type Repos = Parameters<Parameters<UnitOfWork['run']>[0]>[0];
  * Localiza PENDING_REFERENCE do mesmo provider + external_reference (ordem
  * created_at, id) e reavalia cada uma com as regras de REFUND/ROLLBACK.
  *
- * Decisões de implementação (não prescritas pelo contrato):
- * - Invocável pela aplicação (ex.: após PlaceBet/WIN/REFUND ou futuro SQS).
+ * Decisões de implementação:
+ * - Invocável pela aplicação (Inbox após Processed) ou pelo worker de TTL/backoff.
  * - Cada pendência em UoW própria (isolamento; falha técnica não marca REJECTED).
- * - Referência ainda ausente → defer (permanece PENDING_REFERENCE).
+ * - Referência ainda ausente → se TTL 24h esgotado → REJECTED + REFERENCE_NOT_FOUND
+ *   + Outbox na mesma TX; senão agenda next_attempt_at (backoff min(300, 2^n)).
  * - Lock: SELECT FOR UPDATE da pendência, depois da wallet.
  */
 export class ReprocessPendingReferencesUseCase {
@@ -198,6 +201,23 @@ export class ReprocessPendingReferencesUseCase {
     });
 
     if (decision.outcome === 'defer') {
+      const now = new Date();
+      if (
+        pending.pendingReferenceAt &&
+        isPendingReferenceExpired(pending.pendingReferenceAt, now)
+      ) {
+        return this.persistRejection(
+          repos,
+          pending,
+          wallet,
+          FAILURE_CODE_REFERENCE_NOT_FOUND,
+          null,
+        );
+      }
+
+      pending.recordDeferRetry(now);
+      await repos.wagerTransactions.save(pending);
+
       return {
         transactionId: pending.id,
         kind: pending.kind,

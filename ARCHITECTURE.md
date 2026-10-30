@@ -54,16 +54,62 @@ Header `Idempotency-Key` obrigatório em `POST /wagering/transactions`. Hash can
 
 Outbox claim (`SKIP LOCKED`) → SQS; Inbox + ACK após commit. Filas locais via LocalStack (nomes do ambiente atual).
 
-### Workers por processo (Fase B)
+### Workers por processo (Fase B/C)
 
 Com `WORKERS_ENABLED=true`, cada instância Nest agenda loops independentes
-(`MessagingWorkersHost`): `outboxPublisher.publishBatch()` e
-`inboxConsumer.pollOnce()`. Claim continua `FOR UPDATE SKIP LOCKED` +
-`locked_until` — vários publishers não “roubam” a mesma linha enquanto o lease
-é válido.
+(`MessagingWorkersHost`): Outbox publish, Inbox de **eventos** e Inbound
+`WagerTransactionRequested`. Claim outbox: `FOR UPDATE SKIP LOCKED` +
+`locked_until`.
 
-Compose: serviços explícitos `app-1` / `app-2` / `app-3` (mesma imagem, portas
-host 3001–3003). `INSTANCE_ID` identifica o processo em `/health/live`.
+Compose: `app-1` / `app-2` / `app-3` (portas 3001–3003). `INSTANCE_ID` em
+`/health/live`.
+
+### Filas SQS (decisão §10)
+
+| Fila | Tipo | Uso |
+|------|------|-----|
+| `jungle-wager-transactions.fifo` (+ DLQ `.fifo`) | **FIFO** | Inbound `WagerTransactionRequested` — alinhado ao contrato |
+| `jungle-wager-events` (+ DLQ) | Standard | Eventos de integração (outbox) |
+
+A fila de **eventos** permanece standard no ambiente local (histórico Fase B);
+a de **entrada de apostas** é FIFO conforme o contrato. Inbox deduplica por
+`(consumer_name, message_id)`.
+
+### Inbound (Fase C1)
+
+`InboundWagerConsumer`: valida envelope (money como string) → UoW única
+`inbox.tryInsert` + `SubmitWagerTransactionUseCase.executeWithRepos` (efeito +
+outbox) → ACK após commit.
+
+### PENDING_REFERENCE TTL (Fase C2)
+
+- `pending_reference_at`: momento de entrada em `PENDING_REFERENCE` (TTL **24h**).
+- Backoff de reavaliação: `next_attempt_at = now + min(300, 2^n)` s
+  (`n = pending_attempt_count`); sem teto extra de tentativas.
+- Expiração prevalece sobre `next_attempt_at` futuro.
+- Claim multi-instância: `FOR UPDATE SKIP LOCKED` + `locked_until` (só lease).
+- `pending_attempt_count` incrementa em **defer** (`recordDeferRetry`), comum a
+  Inbox e worker — não no claim (evita contornar backoff no caminho Inbox).
+- Expiração → `REJECTED` + `REFERENCE_NOT_FOUND` + outbox
+  `WagerTransactionRejected` na mesma UoW.
+- Worker: `ProcessPendingReferencesUseCase` no `MessagingWorkersHost`
+  (`WORKER_PENDING_INTERVAL_MS`).
+
+### Graceful shutdown (Fase C3)
+
+- `main.ts`: `app.enableShutdownHooks()` — Nest propaga SIGTERM/SIGINT.
+- Ordem: `MessagingWorkersHost.beforeApplicationShutdown` (stopped + clear
+  timers + await in-flight até `SHUTDOWN_DRAIN_MS`) →
+  `AppModule.onModuleDestroy` (`DataSource.destroy`).
+- Limpar timer **não** cancela tick em voo; só impede novos polls.
+- ACK Inbox/Inbound permanece após commit; interrupção pré-ACK → redelivery
+  (at-least-once + Inbox).
+- `/health/ready` → 503 se `stopping`; Compose: `stop_signal: SIGTERM`,
+  `stop_grace_period: 15s`.
+- **Drain timeout:** marca `abandonInFlight` → sem ACK; `ChangeMessageVisibility(0)`
+  best-effort nos receipts tracked; outbox claimada recupera via `locked_until`.
+  Se VT=0 falhar, permanece o visibility timeout original.
+- Probe de teste: `SHUTDOWN_TEST_HOLD_MS` (0 em prod) — hold após receive/claim.
 
 ## Reversões REFUND / ROLLBACK (decisão §7)
 

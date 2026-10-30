@@ -40,5 +40,9 @@ function isPrimaryKeyViolation(error: unknown): boolean {
   }
   const named =
     candidate.driverError?.constraint ?? candidate.constraint ?? '';
-  return named === 'PK_inbox_message_id' || named.includes('inbox_message');
+  return (
+    named === 'PK_inbox_message_consumer_id' ||
+    named === 'PK_inbox_message_id' ||
+    named.includes('inbox_message')
+  );
 }

@@ -4,6 +4,7 @@ import {
   FAILURE_CODE_INSUFFICIENT_FUNDS,
   type WagerFailureCode,
 } from './failure-codes';
+import { computePendingNextAttemptAt } from './pending-reference-policy';
 import { InvalidWagerTransactionError } from './wager-transaction.errors';
 
 export type { OperationResultSnapshot } from './operation-result-snapshot';
@@ -105,6 +106,10 @@ export type WagerTransactionState = {
   observedWalletVersion?: number | null;
   createdAt?: Date | string;
   updatedAt?: Date | string;
+  pendingReferenceAt?: Date | string | null;
+  pendingAttemptCount?: number;
+  nextAttemptAt?: Date | string | null;
+  lockedUntil?: Date | string | null;
 };
 
 /**
@@ -133,6 +138,10 @@ export class WagerTransaction {
     private _observedWalletVersion: number | null,
     public readonly createdAt: Date,
     private _updatedAt: Date,
+    private _pendingReferenceAt: Date | null = null,
+    private _pendingAttemptCount: number = 0,
+    private _nextAttemptAt: Date | null = null,
+    private _lockedUntil: Date | null = null,
   ) {}
 
   get type(): WagerTransactionKind {
@@ -170,6 +179,22 @@ export class WagerTransaction {
 
   get updatedAt(): Date {
     return this._updatedAt;
+  }
+
+  get pendingReferenceAt(): Date | null {
+    return this._pendingReferenceAt;
+  }
+
+  get pendingAttemptCount(): number {
+    return this._pendingAttemptCount;
+  }
+
+  get nextAttemptAt(): Date | null {
+    return this._nextAttemptAt;
+  }
+
+  get lockedUntil(): Date | null {
+    return this._lockedUntil;
   }
 
   get isTerminal(): boolean {
@@ -223,7 +248,7 @@ export class WagerTransaction {
     this._failureCode = null;
     this._observedBalance = snap.observedBalance;
     this._observedWalletVersion = snap.observedWalletVersion;
-    this._updatedAt = at;
+    this.clearPendingSchedule(at);
   }
 
   /**
@@ -250,6 +275,37 @@ export class WagerTransaction {
     this._failureCode = failureCode;
     this._observedBalance = snap.observedBalance;
     this._observedWalletVersion = snap.observedWalletVersion;
+    this.clearPendingSchedule(at);
+  }
+
+  /**
+   * Referência ainda ausente (dentro do TTL): incrementa tentativa e agenda
+   * backoff min(300, 2^n). Mesma política para Inbox e worker — o claim só
+   * segura lease; não conta tentativa.
+   */
+  recordDeferRetry(at: Date = new Date()): void {
+    if (this._status !== WAGER_TRANSACTION_STATUS_PENDING_REFERENCE) {
+      throw new InvalidWagerTransactionError(
+        'somente PENDING_REFERENCE pode agendar retry',
+      );
+    }
+    this._pendingAttemptCount += 1;
+    this._nextAttemptAt = computePendingNextAttemptAt(
+      this._pendingAttemptCount,
+      at,
+    );
+    this._lockedUntil = null;
+    this._updatedAt = at;
+  }
+
+  /** Aplica lease do claim SQL (FOR UPDATE SKIP LOCKED). */
+  applyClaimLease(lockedUntil: Date): void {
+    this._lockedUntil = lockedUntil;
+  }
+
+  private clearPendingSchedule(at: Date): void {
+    this._nextAttemptAt = null;
+    this._lockedUntil = null;
     this._updatedAt = at;
   }
 
@@ -372,6 +428,10 @@ export class WagerTransaction {
       null,
       now,
       now,
+      now,
+      0,
+      null,
+      null,
     );
   }
 
@@ -451,6 +511,10 @@ export class WagerTransaction {
       null,
       now,
       now,
+      now,
+      0,
+      null,
+      null,
     );
   }
 
@@ -524,6 +588,16 @@ export class WagerTransaction {
       snapshot.observedWalletVersion,
       WagerTransaction.toDate(state.createdAt ?? new Date()),
       WagerTransaction.toDate(state.updatedAt ?? new Date()),
+      state.pendingReferenceAt == null
+        ? null
+        : WagerTransaction.toDate(state.pendingReferenceAt),
+      state.pendingAttemptCount ?? 0,
+      state.nextAttemptAt == null
+        ? null
+        : WagerTransaction.toDate(state.nextAttemptAt),
+      state.lockedUntil == null
+        ? null
+        : WagerTransaction.toDate(state.lockedUntil),
     );
   }
 

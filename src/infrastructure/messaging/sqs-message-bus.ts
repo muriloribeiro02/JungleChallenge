@@ -33,6 +33,7 @@ export class SqsMessageBus implements MessageBus {
   }
 
   async publish(message: BusMessage): Promise<void> {
+    const fifo = this.queueUrl.includes('.fifo');
     await this.client.send(
       new SendMessageCommand({
         QueueUrl: this.queueUrl,
@@ -51,6 +52,15 @@ export class SqsMessageBus implements MessageBus {
               )
             : {}),
         },
+        ...(fifo
+          ? {
+              MessageGroupId:
+                message.attributes?.messageGroupId ??
+                message.attributes?.walletId ??
+                'default',
+              MessageDeduplicationId: message.id,
+            }
+          : {}),
       }),
     );
   }

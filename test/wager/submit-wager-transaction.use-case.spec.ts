@@ -48,7 +48,7 @@ describe('SubmitWagerTransactionUseCase (unit)', () => {
 
   it('delega BET e marca idempotentReplay=false na primeira vez', async () => {
     const placeBet = {
-      execute: jest.fn(async () => ({
+      executeWithRepos: jest.fn(async () => ({
         transactionId: randomUUID(),
         status: 'PROCESSED',
         observedBalance: '90.00',
@@ -58,10 +58,10 @@ describe('SubmitWagerTransactionUseCase (unit)', () => {
     const uc = new SubmitWagerTransactionUseCase(
       new EmptyUow(),
       placeBet as never,
-      { execute: async () => ({}) } as never,
-      { execute: async () => ({}) } as never,
-      { execute: async () => ({}) } as never,
-      { execute: async () => ({}) } as never,
+      { executeWithRepos: async () => ({}) } as never,
+      { executeWithRepos: async () => ({}) } as never,
+      { executeWithRepos: async () => ({}) } as never,
+      { executeWithRepos: async () => ({}) } as never,
     );
 
     const result = await uc.execute({
@@ -76,7 +76,7 @@ describe('SubmitWagerTransactionUseCase (unit)', () => {
       idempotencyKey: 'p:e',
     });
 
-    expect(placeBet.execute).toHaveBeenCalled();
+    expect(placeBet.executeWithRepos).toHaveBeenCalled();
     expect(result.idempotentReplay).toBe(false);
     expect(result.balance?.amount).toBe('90.00');
   });

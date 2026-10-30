@@ -15,7 +15,10 @@ import {
   buildWagerTransactionProcessedEvent,
   buildWalletBalanceChangedEvent,
 } from '../../events/wallet-balance.events';
-import type { UnitOfWork } from '../../ports/unit-of-work';
+import type {
+  TransactionalRepositories,
+  UnitOfWork,
+} from '../../ports/unit-of-work';
 import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import {
   computeWinPayloadHash,
@@ -61,6 +64,37 @@ export type SettleWinOutput = {
  */
 export class SettleWinUseCase {
   constructor(private readonly unitOfWork: UnitOfWork) {}
+
+  async executeWithRepos(
+    repos: TransactionalRepositories,
+    input: SettleWinInput,
+  ): Promise<SettleWinOutput> {
+    this.assertInput(input);
+
+    const amount = Money.from({
+      amount: input.amount,
+      currency: input.currency,
+    });
+
+    if (!amount.isPositive()) {
+      throw new InvalidSettleWinInputError('amount da WIN deve ser positivo');
+    }
+
+    const businessPayload: WinBusinessPayload = {
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: amount.toString(),
+      currency: amount.currency,
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      kind: 'WIN',
+    };
+    const payloadHash = computeWinPayloadHash(businessPayload);
+
+    return this.processWin(repos, input, amount, payloadHash);
+  }
 
   async execute(input: SettleWinInput): Promise<SettleWinOutput> {
     this.assertInput(input);
@@ -113,7 +147,7 @@ export class SettleWinUseCase {
   }
 
   private async processWin(
-    repos: Parameters<Parameters<UnitOfWork['run']>[0]>[0],
+    repos: TransactionalRepositories,
     input: SettleWinInput,
     amount: Money,
     payloadHash: string,

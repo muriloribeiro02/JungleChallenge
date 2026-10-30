@@ -5,9 +5,12 @@ import {
   assertBalanceEqualsLedger,
   cleanupWallets,
   createWallet,
+  dockerCompose,
   fetchJson,
   roundRobinBase,
+  sleep,
   submitBet,
+  submitRefund,
   waitForInstances,
   waitUntil,
   type LiveInfo,
@@ -421,10 +424,412 @@ describe('Multi-instance (3 processos reais)', () => {
       await reconcileOk(wallet.id);
     }, 120_000);
   });
+
+  describe('Cenário E — PENDING_REFERENCE TTL multi-processo (C2)', () => {
+    it('três workers reais: uma claim → um REJECTED + um WagerTransactionRejected', async () => {
+      const wallet = await createWallet(MULTI_INSTANCE_BASES[0], '100.00');
+      walletIds.push(wallet.id);
+      const providerId = 'provider-multi-e-ttl';
+      const missingRef = randomUUID();
+
+      const refund = await submitRefund(MULTI_INSTANCE_BASES[1], {
+        providerId,
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        amount: '10.00',
+        idempotencyKey: `${providerId}:ttl-pending`,
+        referenceExternalTransactionId: missingRef,
+      });
+      expect(refund.status).toBe(202);
+      expect(refund.body.status).toBe('PENDING_REFERENCE');
+      const pendingId = refund.body.transactionId as string;
+
+      // Torna elegível em todas as instâncias ao mesmo tempo (TTL expirado
+      // prevalece sobre next_attempt futuro). Workers app-1/2/3 competem via
+      // FOR UPDATE SKIP LOCKED — não usamos Promise.all no mesmo processo.
+      const client = createDbClient();
+      await client.connect();
+      try {
+        await client.query(
+          `
+            UPDATE wager_transaction
+            SET pending_reference_at = NOW() - INTERVAL '25 hours',
+                next_attempt_at = NOW() + INTERVAL '30 minutes',
+                locked_until = NULL,
+                pending_attempt_count = 0
+            WHERE id = $1
+          `,
+          [pendingId],
+        );
+      } finally {
+        await client.end();
+      }
+
+      await waitUntil(async () => {
+        const c = createDbClient();
+        await c.connect();
+        try {
+          const row = await c.query(
+            `SELECT status FROM wager_transaction WHERE id = $1`,
+            [pendingId],
+          );
+          return row.rows[0]?.status === 'REJECTED';
+        } finally {
+          await c.end();
+        }
+      }, 60_000);
+
+      const verify = createDbClient();
+      await verify.connect();
+      try {
+        const tx = await verify.query(
+          `
+            SELECT status, failure_code, pending_attempt_count
+            FROM wager_transaction WHERE id = $1
+          `,
+          [pendingId],
+        );
+        expect(tx.rows).toHaveLength(1);
+        expect(tx.rows[0].status).toBe('REJECTED');
+        expect(tx.rows[0].failure_code).toBe('REFERENCE_NOT_FOUND');
+
+        const rejectedEvents = await verify.query(
+          `
+            SELECT id, event_type, payload
+            FROM outbox_message
+            WHERE aggregate_id = $1
+              AND event_type = 'WagerTransactionRejected'
+          `,
+          [pendingId],
+        );
+        expect(rejectedEvents.rows).toHaveLength(1);
+        expect(rejectedEvents.rows[0].payload.data.failureCode).toBe(
+          'REFERENCE_NOT_FOUND',
+        );
+
+        const ledger = await verify.query(
+          `SELECT COUNT(*)::int AS c FROM wallet_ledger_entry WHERE transaction_id = $1`,
+          [pendingId],
+        );
+        expect(ledger.rows[0].c).toBe(0);
+
+        const bal = await verify.query(
+          `SELECT balance::text AS b FROM wallet WHERE id = $1`,
+          [wallet.id],
+        );
+        expect(String(bal.rows[0].b)).toContain('100');
+      } finally {
+        await verify.end();
+      }
+
+      await assertBalanceEqualsLedger(wallet.id);
+      await reconcileOk(wallet.id);
+      // Três processos distintos estavam vivos (beforeAll); a unicidade
+      // REJECTED/outbox prova que só um claim venceu entre eles.
+      expect(lives.map((l) => l.instanceId).sort()).toEqual([
+        'app-1',
+        'app-2',
+        'app-3',
+      ]);
+    }, 120_000);
+  });
+
+  describe('Cenário F — Graceful shutdown multi-processo (C3)', () => {
+    afterEach(async () => {
+      // Restaura app-1 sem probe de hold e sobe as três instâncias.
+      await dockerCompose(
+        ['up', '-d', '--no-deps', '--force-recreate', 'app-1'],
+        {
+          env: {
+            ...process.env,
+            SHUTDOWN_DRAIN_MS: '10000',
+            SHUTDOWN_TEST_HOLD_MS: '0',
+            OUTBOX_CLAIM_LEASE_SECONDS: '60',
+          },
+        },
+      ).catch(() => undefined);
+      await dockerCompose(['start', 'app-1', 'app-2', 'app-3']).catch(
+        () => undefined,
+      );
+      lives = await waitForInstances(120_000);
+    }, 180_000);
+
+    it('H) SIGTERM em app-1 — app-2 e app-3 continuam aceitando apostas', async () => {
+      await dockerCompose(['stop', 'app-1']);
+
+      await waitUntil(async () => {
+        try {
+          const res = await fetch(`${MULTI_INSTANCE_BASES[0]}/health/live`);
+          return !res.ok;
+        } catch {
+          return true;
+        }
+      }, 60_000);
+
+      const live2 = await fetchJson<LiveInfo>(
+        `${MULTI_INSTANCE_BASES[1]}/health/live`,
+      );
+      const live3 = await fetchJson<LiveInfo>(
+        `${MULTI_INSTANCE_BASES[2]}/health/live`,
+      );
+      expect(live2.status).toBe(200);
+      expect(live3.status).toBe(200);
+      expect(live2.body.instanceId).toBe('app-2');
+      expect(live3.body.instanceId).toBe('app-3');
+      expect(live2.body.stopping).not.toBe(true);
+      expect(live3.body.stopping).not.toBe(true);
+
+      const wallet = await createWallet(MULTI_INSTANCE_BASES[1], '200.00');
+      walletIds.push(wallet.id);
+
+      const bet2 = await submitBet(MULTI_INSTANCE_BASES[1], {
+        providerId: 'provider-multi-f-h',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        amount: '10.00',
+        idempotencyKey: 'provider-multi-f-h:bet-2',
+        externalTransactionId: 'bet-app2',
+      });
+      const bet3 = await submitBet(MULTI_INSTANCE_BASES[2], {
+        providerId: 'provider-multi-f-h',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        amount: '15.00',
+        idempotencyKey: 'provider-multi-f-h:bet-3',
+        externalTransactionId: 'bet-app3',
+      });
+
+      expect(bet2.status).toBe(200);
+      expect(bet3.status).toBe(200);
+      expect(bet2.body.status).toBe('PROCESSED');
+      expect(bet3.body.status).toBe('PROCESSED');
+      await assertBalanceEqualsLedger(wallet.id);
+    }, 180_000);
+
+    it('G) reinício de app-1 — workers retomam e publicam outbox', async () => {
+      const wallet = await createWallet(MULTI_INSTANCE_BASES[2], '150.00');
+      walletIds.push(wallet.id);
+
+      const bet = await submitBet(MULTI_INSTANCE_BASES[2], {
+        providerId: 'provider-multi-f-g',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        amount: '20.00',
+        idempotencyKey: 'provider-multi-f-g:seed',
+        externalTransactionId: 'seed-restart',
+      });
+      expect(bet.body.status).toBe('PROCESSED');
+      const txId = bet.body.transactionId as string;
+
+      // Força re-publicação: simula claim abandonado após SIGTERM mid-flight.
+      const client = createDbClient();
+      await client.connect();
+      try {
+        await client.query(
+          `
+            UPDATE outbox_message
+            SET published_at = NULL,
+                locked_until = NULL,
+                next_attempt_at = NOW() - INTERVAL '1 second'
+            WHERE aggregate_id = $1 OR aggregate_id = $2
+          `,
+          [txId, wallet.id],
+        );
+      } finally {
+        await client.end();
+      }
+
+      await dockerCompose(['stop', 'app-1']);
+      await sleep(1500);
+      await dockerCompose(['start', 'app-1']);
+      lives = await waitForInstances(120_000);
+      expect(lives.map((l) => l.instanceId).sort()).toEqual([
+        'app-1',
+        'app-2',
+        'app-3',
+      ]);
+
+      await waitUntil(async () => {
+        const c = createDbClient();
+        await c.connect();
+        try {
+          const pending = await c.query(
+            `
+              SELECT COUNT(*)::int AS c
+              FROM outbox_message
+              WHERE (aggregate_id = $1 OR aggregate_id = $2)
+                AND published_at IS NULL
+            `,
+            [txId, wallet.id],
+          );
+          return pending.rows[0].c === 0;
+        } finally {
+          await c.end();
+        }
+      }, 60_000);
+
+      const betOn1 = await submitBet(MULTI_INSTANCE_BASES[0], {
+        providerId: 'provider-multi-f-g',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        amount: '5.00',
+        idempotencyKey: 'provider-multi-f-g:after-restart',
+        externalTransactionId: 'after-restart',
+      });
+      expect(betOn1.status).toBe(200);
+      expect(betOn1.body.status).toBe('PROCESSED');
+      await assertBalanceEqualsLedger(wallet.id);
+    }, 180_000);
+
+    it('I) drain_timeout real: hold pós-claim → SIGTERM → lease/recovery + integridade', async () => {
+      // app-1 com hold longo e drain curto (processo real no Compose).
+      await dockerCompose(['stop', 'app-1']);
+      await dockerCompose(
+        ['up', '-d', '--no-deps', '--force-recreate', 'app-1'],
+        {
+          env: {
+            ...process.env,
+            SHUTDOWN_DRAIN_MS: '500',
+            SHUTDOWN_TEST_HOLD_MS: '12000',
+            OUTBOX_CLAIM_LEASE_SECONDS: '5',
+            WORKER_OUTBOX_INTERVAL_MS: '200',
+            WORKER_INBOX_INTERVAL_MS: '60000',
+            WORKER_INBOUND_INTERVAL_MS: '60000',
+            WORKER_PENDING_INTERVAL_MS: '60000',
+          },
+        },
+      );
+
+      await waitUntil(async () => {
+        try {
+          const res = await fetch(`${MULTI_INSTANCE_BASES[0]}/health/live`);
+          if (!res.ok) return false;
+          const body = (await res.json()) as LiveInfo;
+          return body.instanceId === 'app-1';
+        } catch {
+          return false;
+        }
+      }, 90_000);
+
+      const wallet = await createWallet(MULTI_INSTANCE_BASES[1], '180.00');
+      walletIds.push(wallet.id);
+      const bet = await submitBet(MULTI_INSTANCE_BASES[1], {
+        providerId: 'provider-multi-f-i',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        amount: '12.00',
+        idempotencyKey: 'provider-multi-f-i:drain',
+        externalTransactionId: 'drain-hold',
+      });
+      expect(bet.body.status).toBe('PROCESSED');
+      const txId = bet.body.transactionId as string;
+
+      const client = createDbClient();
+      await client.connect();
+      try {
+        await client.query(
+          `
+            UPDATE outbox_message
+            SET published_at = NULL,
+                locked_until = NULL,
+                next_attempt_at = NOW() - INTERVAL '1 second',
+                attempts = 0
+            WHERE aggregate_id = $1 OR aggregate_id = $2
+          `,
+          [txId, wallet.id],
+        );
+      } finally {
+        await client.end();
+      }
+
+      // Tempo para app-1 claimar e entrar no hold (SHUTDOWN_TEST_HOLD_MS).
+      await sleep(2500);
+
+      await dockerCompose(['stop', 'app-1']);
+
+      const logs = await dockerCompose(['logs', 'app-1', '--tail', '80']);
+      const combined = `${logs.stdout}\n${logs.stderr}`;
+      expect(combined).toMatch(/shutdown\.drain_timeout/);
+      expect(combined).toMatch(/drained=false/);
+
+      // app-2/3 recuperam via lease da outbox (sem efeito financeiro duplicado).
+      await waitUntil(async () => {
+        const c = createDbClient();
+        await c.connect();
+        try {
+          const pending = await c.query(
+            `
+              SELECT COUNT(*)::int AS c
+              FROM outbox_message
+              WHERE (aggregate_id = $1 OR aggregate_id = $2)
+                AND published_at IS NULL
+            `,
+            [txId, wallet.id],
+          );
+          return pending.rows[0].c === 0;
+        } finally {
+          await c.end();
+        }
+      }, 90_000);
+
+      const verify = createDbClient();
+      await verify.connect();
+      try {
+        const bets = await verify.query(
+          `
+            SELECT COUNT(*)::int AS c
+            FROM wager_transaction
+            WHERE wallet_id = $1 AND kind = 'BET' AND status = 'PROCESSED'
+          `,
+          [wallet.id],
+        );
+        expect(bets.rows[0].c).toBe(1);
+
+        const debits = await verify.query(
+          `
+            SELECT COUNT(*)::int AS c
+            FROM wallet_ledger_entry
+            WHERE wallet_id = $1 AND direction = 'DEBIT'
+          `,
+          [wallet.id],
+        );
+        expect(debits.rows[0].c).toBe(1);
+
+        const dupOutbox = await verify.query(
+          `
+            SELECT id, COUNT(*)::int AS c
+            FROM outbox_message
+            WHERE aggregate_id = $1 OR aggregate_id = $2
+            GROUP BY id
+            HAVING COUNT(*) > 1
+          `,
+          [txId, wallet.id],
+        );
+        expect(dupOutbox.rows).toHaveLength(0);
+      } finally {
+        await verify.end();
+      }
+
+      await assertBalanceEqualsLedger(wallet.id);
+      // app-1 ainda parado após SIGTERM — reconcilia via app-2.
+      await reconcileOk(wallet.id, MULTI_INSTANCE_BASES[1]);
+
+      const live2 = await fetchJson<LiveInfo>(
+        `${MULTI_INSTANCE_BASES[1]}/health/live`,
+      );
+      const live3 = await fetchJson<LiveInfo>(
+        `${MULTI_INSTANCE_BASES[2]}/health/live`,
+      );
+      expect(live2.status).toBe(200);
+      expect(live3.status).toBe(200);
+    }, 240_000);
+  });
 });
 
-async function reconcileOk(walletId: string): Promise<void> {
-  const base = MULTI_INSTANCE_BASES[0];
+async function reconcileOk(
+  walletId: string,
+  base: string = MULTI_INSTANCE_BASES[0],
+): Promise<void> {
   const { status, body } = await fetchJson<{ consistent: boolean }>(
     `${base}/wallets/${walletId}/reconciliation`,
     { method: 'POST' },

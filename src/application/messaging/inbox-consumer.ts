@@ -1,9 +1,18 @@
-import { InboxMessage } from '../../domain/inbox/inbox-message.entity';
+import {
+  InboxMessage,
+  INBOX_CONSUMER_DOMAIN_EVENTS,
+} from '../../domain/inbox/inbox-message.entity';
 import type { DomainEventEnvelope } from '../../domain/events/domain-event';
 import type { MessageBus, ReceivedBusMessage } from '../ports/message-bus';
 import type { MessagingLogger } from '../ports/messaging-logger';
 import type { UnitOfWork } from '../ports/unit-of-work';
+import {
+  trackSqsReceipt,
+  untrackSqsReceipt,
+} from './active-sqs-receipts';
 import type { DomainEventHandler } from './domain-event-handler';
+import { shutdownGate } from './shutdown-gate';
+import { applyShutdownTestHoldIfConfigured } from './shutdown-test-hold';
 
 export type InboxConsumerOptions = {
   maxMessages: number;
@@ -43,25 +52,53 @@ export class InboxConsumer {
     let failed = 0;
 
     for (const message of messages) {
+      if (shutdownGate.stopping || shutdownGate.abandonInFlight) {
+        await this.releaseWithoutAck(message, 'shutdown_before_start');
+        failed += 1;
+        continue;
+      }
+
+      const receiptKey = `inbox:${message.transportMessageId}:${message.receiptHandle}`;
+      trackSqsReceipt(
+        receiptKey,
+        this.bus,
+        message.receiptHandle,
+        message.transportMessageId,
+      );
+
       try {
+        // Probe C3 (só com SHUTDOWN_TEST_HOLD_MS): hold após receive, antes do UoW.
+        await applyShutdownTestHoldIfConfigured();
+
+        if (shutdownGate.abandonInFlight) {
+          await this.releaseWithoutAck(message, 'shutdown_abandon');
+          untrackSqsReceipt(receiptKey);
+          failed += 1;
+          continue;
+        }
+
         const outcome = await this.consumeOne(message);
+
+        if (shutdownGate.abandonInFlight) {
+          // UoW pode ter commitado — sem ACK; redelivery → Inbox dedupe.
+          await this.releaseWithoutAck(message, 'shutdown_abandon_after_uow');
+          untrackSqsReceipt(receiptKey);
+          failed += 1;
+          continue;
+        }
+
         if (outcome === 'duplicate') {
           duplicates += 1;
         } else {
           processed += 1;
         }
         await this.bus.ack(message.receiptHandle);
+        untrackSqsReceipt(receiptKey);
       } catch (error) {
         failed += 1;
-        // Decisão: visibility=0 após falha técnica para redelivery imediata
-        // (ApproximateReceiveCount / maxReceiveCount / DLQ continuam no transporte).
-        if (this.bus.changeVisibility) {
-          try {
-            await this.bus.changeVisibility(message.receiptHandle, 0);
-          } catch {
-            // Mantém visibility original; próximo poll após VT.
-          }
-        }
+        untrackSqsReceipt(receiptKey);
+        // visibility=0 após falha técnica / abandon — best-effort.
+        await this.releaseWithoutAck(message, 'error');
         this.logger.error('inbox.message_failed', {
           transportMessageId: message.transportMessageId,
           receiveCount: message.receiveCount,
@@ -101,6 +138,7 @@ export class InboxConsumer {
       const first = await repos.inboxMessages.tryInsert(
         InboxMessage.record({
           id: eventId,
+          consumerName: INBOX_CONSUMER_DOMAIN_EVENTS,
           eventType: envelope.eventType,
           transportMessageId: message.transportMessageId,
         }),
@@ -132,6 +170,24 @@ export class InboxConsumer {
     });
 
     return 'processed';
+  }
+
+  private async releaseWithoutAck(
+    message: ReceivedBusMessage,
+    reason: string,
+  ): Promise<void> {
+    // Nunca ACK aqui — só devolve à fila o mais cedo possível (best-effort).
+    if (this.bus.changeVisibility) {
+      try {
+        await this.bus.changeVisibility(message.receiptHandle, 0);
+        this.logger.info('inbox.visibility_zero', {
+          transportMessageId: message.transportMessageId,
+          reason,
+        });
+      } catch {
+        // VT original; redelivery após visibility timeout.
+      }
+    }
   }
 }
 

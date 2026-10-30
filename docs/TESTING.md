@@ -131,8 +131,12 @@ test/
 | `refund-rollback.use-case.e2e-spec.ts` | e2e | REFUND/ROLLBACK PG: saldo, ledger, PENDING_REFERENCE, race duplicada, UNIQUE, atomicidade |
 | `refund-rollback-cross-kind.use-case.e2e-spec.ts` | e2e | H1: REFUND×ROLLBACK sequencial/simultâneo, reprocess, falha técnica, UNIQUE PG, ledger |
 | `unique-any-processed-reversal.migration.spec.ts` | unit | `up`/`down` da 011: UNIQUE cross-kind PROCESSED |
-| `reprocess-pending-references.use-case.spec.ts` | unit | reprocessamento: REFUND/ROLLBACK, rejeição, 2 pendências, cross-kind, defer, outro provider |
+| `reprocess-pending-references.use-case.spec.ts` | unit | reprocessamento: REFUND/ROLLBACK, rejeição, 2 pendências, cross-kind, defer+backoff, TTL→REFERENCE_NOT_FOUND, outro provider |
 | `reprocess-pending-references.use-case.e2e-spec.ts` | e2e | reprocess PG: saldo/ledger/eventos, corrida, rollback técnico, provider isolation |
+| `process-pending-references.use-case.spec.ts` | unit | worker claim + TTL expire único Rejected |
+| `process-pending-references.use-case.e2e-spec.ts` | e2e | TTL expire+outbox; 3 claims concorrentes → 1 terminal; ref antes do TTL |
+| `pending-reference-policy.spec.ts` | unit | TTL 24h; backoff min(300, 2^n) |
+| `pending-reference-ttl.migration.spec.ts` | unit | SQL up/down 013 (`pending_reference_at`, claim) |
 | `wallet.mapper.spec.ts` | unit | `WalletMapper` toPersistence/toDomain e round-trip sem `number` |
 | `get-wallet-balance.use-case.spec.ts` | unit | `GetWalletBalanceUseCase`: encontrada / inexistente (InMemoryWalletRepository) |
 | `open-wallet.use-case.spec.ts` | unit | `OpenWalletUseCase`: zero / positivo / negativo / duplicata / orquestração |
@@ -167,7 +171,10 @@ bun run test:unit -- unique-any-processed-reversal.migration
 bun run test:e2e -- refund-rollback
 bun run test:e2e -- refund-rollback-cross-kind
 bun run test:unit -- reprocess-pending
+bun run test:unit -- process-pending
+bun run test:unit -- pending-reference
 bun run test:e2e -- reprocess-pending
+bun run test:e2e -- process-pending
 ```
 
 
@@ -188,14 +195,19 @@ Pré-requisito: `docker compose up -d postgres localstack` e `bun run migration:
 | Arquivo | Tipo | Cobre |
 |---------|------|-------|
 | `messaging/outbox-publisher.use-case.spec.ts` | unit | backoff `next_attempt_at`, API do publisher |
-| `messaging/inbox-consumer.use-case.spec.ts` | unit | inbox nova, duplicata+ACK, falha sem ACK + `changeVisibility(0)` |
-| `messaging/messaging-workers.host.spec.ts` | unit | flag `WORKERS_ENABLED`; ticks outbox/inbox |
+| `messaging/inbox-consumer.use-case.spec.ts` | unit | inbox nova, duplicata+ACK por `(consumerName, id)`, falha sem ACK + `changeVisibility(0)` |
+| `messaging/messaging-workers.host.spec.ts` | unit | flag `WORKERS_ENABLED`; ticks outbox/inbox/inbound/pending |
+| `messaging/graceful-shutdown.spec.ts` | unit | C3: ocioso; drain outbox/inbox/inbound/pending; timeout `SHUTDOWN_DRAIN_MS`; sem poll pós-stop |
+| `messaging/shutdown-abandon-visibility.spec.ts` | unit | abandon sem ACK + VT=0; Host drain_timeout libera receipts |
+| `messaging/inbound-wager-consumer.use-case.spec.ts` | unit | parse envelope; processa; duplicata; money number sem ACK |
 | `messaging/messaging.migration.spec.ts` | unit | SQL up 009 (`locked_until`) e 010 (`inbox_message`) |
-| `messaging/messaging.sqs.e2e-spec.ts` | e2e | publish, retry publish, publishers concorrentes (SKIP LOCKED), inbox/dedupe pós-commit, falha pré-commit, VT/redelivery, recuperação de lease, DLQ (`maxReceiveCount=5`), 3 consumers, saldo/ledger |
+| `messaging/messaging.sqs.e2e-spec.ts` | e2e | publish, retry, SKIP LOCKED, inbox/dedupe, VT/DLQ, 3 consumers |
+| `messaging/inbound-wager.sqs.e2e-spec.ts` | e2e | FIFO inbound: válida, duplicata, falha pré-commit, 2 consumers |
 
 ```bash
 bun run test:unit -- messaging
 bun run test:messaging
+bun run test:e2e -- inbound-wager
 ```
 
 > SQS real via LocalStack (sem mock no e2e). Credenciais `test`/`test` só para endpoint local.
@@ -206,8 +218,8 @@ Pré-requisito: postgres + localstack + migrations + `bun run apps:up`.
 
 | Arquivo | Tipo | Cobre |
 |---------|------|-------|
-| `multi-instance/multi-instance.e2e-spec.ts` | e2e multi-processo | A1: 50× mesma key; A2: race 80+80; B: wallets distintas; C: outbox/lease; D: idempotência cross-instance; ledger + reconciliação |
-| `multi-instance/helpers.ts` | helper | wait `/health`, round-robin bases, cleanup PG |
+| `multi-instance/multi-instance.e2e-spec.ts` | e2e multi-processo | A–E; F/H–G; **F/I**: `drain_timeout` real (`SHUTDOWN_TEST_HOLD_MS`) + lease recovery |
+| `multi-instance/helpers.ts` | helper | wait `/health`, `dockerCompose`, `submitRefund`, cleanup PG |
 
 ```bash
 bun run apps:up

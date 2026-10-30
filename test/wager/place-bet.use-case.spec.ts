@@ -118,6 +118,10 @@ class FakeTx implements WagerTransactionRepository {
   async findByIdForUpdate(id: string): Promise<WagerTransaction | null> {
     return this.items.find((t) => t.id === id) ?? null;
   }
+
+  async claimDuePendingReferences(): Promise<WagerTransaction[]> {
+    return [];
+  }
 }
 
 class FakeLedger implements WalletLedgerEntryRepository {

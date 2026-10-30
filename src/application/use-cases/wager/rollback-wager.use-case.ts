@@ -26,7 +26,10 @@ import {
   buildWagerTransactionPendingReferenceEvent,
   buildWagerTransactionRejectedEvent,
 } from '../../events/wager-outcome.events';
-import type { UnitOfWork } from '../../ports/unit-of-work';
+import type {
+  TransactionalRepositories,
+  UnitOfWork,
+} from '../../ports/unit-of-work';
 import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import {
   computeRollbackPayloadHash,
@@ -67,7 +70,7 @@ export type RollbackWagerOutput = {
   walletVersion?: number;
 };
 
-type Repos = Parameters<Parameters<UnitOfWork['run']>[0]>[0];
+type Repos = TransactionalRepositories;
 
 /**
  * RollbackWagerUseCase — inverte BET (CREDIT), WIN (DEBIT) ou REFUND (DEBIT).
@@ -75,6 +78,40 @@ type Repos = Parameters<Parameters<UnitOfWork['run']>[0]>[0];
  */
 export class RollbackWagerUseCase {
   constructor(private readonly unitOfWork: UnitOfWork) {}
+
+  async executeWithRepos(
+    repos: TransactionalRepositories,
+    input: RollbackWagerInput,
+  ): Promise<RollbackWagerOutput> {
+    this.assertInput(input);
+
+    const amount = Money.from({
+      amount: input.amount,
+      currency: input.currency,
+    });
+
+    if (!amount.isPositive()) {
+      throw new InvalidRollbackWagerInputError(
+        'amount do ROLLBACK deve ser positivo',
+      );
+    }
+
+    const businessPayload: RollbackBusinessPayload = {
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: amount.toString(),
+      currency: amount.currency,
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      kind: 'ROLLBACK',
+      referenceExternalTransactionId: input.referenceExternalTransactionId,
+    };
+    const payloadHash = computeRollbackPayloadHash(businessPayload);
+
+    return this.processRollback(repos, input, amount, payloadHash);
+  }
 
   async execute(input: RollbackWagerInput): Promise<RollbackWagerOutput> {
     this.assertInput(input);

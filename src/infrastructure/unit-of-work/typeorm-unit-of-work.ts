@@ -36,6 +36,7 @@ export function createTransactionalRepositories(
     wallets: new TypeOrmWalletRepository(manager.getRepository(WalletOrmEntity)),
     wagerTransactions: new TypeOrmWagerTransactionRepository(
       manager.getRepository(WagerTransactionOrmEntity),
+      manager,
     ),
     ledgerEntries: new TypeOrmWalletLedgerEntryRepository(
       manager.getRepository(WalletLedgerEntryOrmEntity),

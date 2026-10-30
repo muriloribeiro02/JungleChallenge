@@ -9,7 +9,10 @@ import type {
   TransactionalRepositories,
   UnitOfWork,
 } from '../../src/application/ports/unit-of-work';
-import { InboxMessage } from '../../src/domain/inbox/inbox-message.entity';
+import {
+  InboxMessage,
+  INBOX_CONSUMER_DOMAIN_EVENTS,
+} from '../../src/domain/inbox/inbox-message.entity';
 import type { DomainEventEnvelope } from '../../src/domain/events/domain-event';
 import { ConsoleMessagingLogger } from '../../src/infrastructure/logging/console-messaging-logger';
 import { FakeInboxRepository } from '../helpers/fake-inbox';
@@ -116,7 +119,11 @@ describe('InboxConsumer (unit)', () => {
     const uow = new StubUow();
     const eventId = randomUUID();
     await uow.inbox.tryInsert(
-      InboxMessage.record({ id: eventId, eventType: 'WalletBalanceChanged' }),
+      InboxMessage.record({
+        id: eventId,
+        consumerName: INBOX_CONSUMER_DOMAIN_EVENTS,
+        eventType: 'WalletBalanceChanged',
+      }),
     );
 
     const handler = {

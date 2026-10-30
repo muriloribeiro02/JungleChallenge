@@ -20,6 +20,13 @@ export const sqsEnv = {
   dlqUrl:
     process.env.SQS_DLQ_URL ??
     'http://localhost:4566/000000000000/jungle-wager-events-dlq',
+  /** Contrato §10: wager-transactions.fifo (+ DLQ). */
+  inboundQueueUrl:
+    process.env.SQS_INBOUND_QUEUE_URL ??
+    'http://localhost:4566/000000000000/jungle-wager-transactions.fifo',
+  inboundDlqUrl:
+    process.env.SQS_INBOUND_DLQ_URL ??
+    'http://localhost:4566/000000000000/jungle-wager-transactions-dlq.fifo',
   visibilityTimeoutSeconds: Number(
     process.env.SQS_VISIBILITY_TIMEOUT_SECONDS ?? 30,
   ),

@@ -19,10 +19,10 @@ export type PendingReversalDecision =
 
 /**
  * Reavalia uma pendência REFUND/ROLLBACK com as mesmas regras dos use cases
- * de criação. `defer` = referência ainda ausente (retry posterior, não REJECTED).
+ * de criação. `defer` = referência ainda ausente (retry/TTL no use case).
  *
- * Decisão de implementação: ausência contínua da referência no reprocessamento
- * não vira rejeição de negócio — preserva retry (contrato não fecha o timeout).
+ * A rejeição por TTL (REFERENCE_NOT_FOUND) é responsabilidade do
+ * ReprocessPendingReferencesUseCase após este defer — não inventa rejeição aqui.
  */
 export function evaluatePendingReversal(input: {
   pending: WagerTransactionEntity;

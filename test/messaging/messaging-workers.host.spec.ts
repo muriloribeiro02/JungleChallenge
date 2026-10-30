@@ -38,6 +38,7 @@ describe('MessagingWorkersHost', () => {
     const host = new MessagingWorkersHost({
       outboxPublisher: { publishBatch },
       inboxConsumer: { pollOnce },
+      inboundWagerConsumer: { pollOnce: jest.fn() },
     } as never);
 
     host.onModuleInit();
@@ -47,11 +48,13 @@ describe('MessagingWorkersHost', () => {
     expect(pollOnce).not.toHaveBeenCalled();
   });
 
-  it('com workers habilitados dispara publishBatch e pollOnce nos ticks', async () => {
+  it('com workers habilitados dispara publishBatch, pollOnce e pending batch', async () => {
     jest.useFakeTimers();
     process.env.WORKERS_ENABLED = 'true';
     process.env.WORKER_OUTBOX_INTERVAL_MS = '100';
     process.env.WORKER_INBOX_INTERVAL_MS = '100';
+    process.env.WORKER_INBOUND_INTERVAL_MS = '100';
+    process.env.WORKER_PENDING_INTERVAL_MS = '100';
 
     const publishBatch = jest.fn().mockResolvedValue({
       claimed: 0,
@@ -64,10 +67,26 @@ describe('MessagingWorkersHost', () => {
       duplicates: 0,
       failed: 0,
     });
+    const inboundPoll = jest.fn().mockResolvedValue({
+      received: 0,
+      processed: 0,
+      duplicates: 0,
+      failed: 0,
+    });
+    const pendingBatch = jest.fn().mockResolvedValue({
+      claimed: 0,
+      processed: 0,
+      rejected: 0,
+      expired: 0,
+      deferred: 0,
+      skipped: 0,
+    });
 
     const host = new MessagingWorkersHost({
       outboxPublisher: { publishBatch },
       inboxConsumer: { pollOnce },
+      inboundWagerConsumer: { pollOnce: inboundPoll },
+      processPendingReferences: { processBatch: pendingBatch },
     } as never);
 
     host.onModuleInit();
@@ -76,5 +95,7 @@ describe('MessagingWorkersHost', () => {
 
     expect(publishBatch.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(pollOnce.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(inboundPoll.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(pendingBatch.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 });

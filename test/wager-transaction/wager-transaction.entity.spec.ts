@@ -379,7 +379,8 @@ describe('WagerTransaction', () => {
       externalReference: randomUUID(),
     });
 
-    it('refundPendingReference não carrega snapshot', () => {
+    it('refundPendingReference não carrega snapshot e marca pending_reference_at', () => {
+      const before = Date.now();
       const tx = WagerTransaction.refundPendingReference(externalBase());
 
       expect(tx.kind).toBe(WAGER_TRANSACTION_TYPE_REFUND);
@@ -387,6 +388,9 @@ describe('WagerTransaction', () => {
       expect(tx.observedBalance).toBeNull();
       expect(tx.resolvedInternalReference).toBeNull();
       expect(tx.isTerminal).toBe(false);
+      expect(tx.pendingReferenceAt).not.toBeNull();
+      expect(tx.pendingReferenceAt!.getTime()).toBeGreaterThanOrEqual(before);
+      expect(tx.pendingAttemptCount).toBe(0);
     });
 
     it('markProcessed promove PENDING_REFERENCE', () => {
@@ -436,6 +440,19 @@ describe('WagerTransaction', () => {
       expect(tx.status).toBe(WAGER_TRANSACTION_STATUS_REJECTED);
       expect(tx.failureCode).toBe(FAILURE_CODE_INVALID_REFERENCE_TYPE);
       expect(tx.observedWalletVersion).toBe(1);
+    });
+
+    it('recordDeferRetry incrementa attempt e agenda backoff progressivo', () => {
+      const tx = WagerTransaction.refundPendingReference(externalBase());
+      const t0 = new Date('2026-10-30T12:00:00.000Z');
+      tx.recordDeferRetry(t0);
+      expect(tx.pendingAttemptCount).toBe(1);
+      expect(tx.nextAttemptAt?.getTime()).toBe(t0.getTime() + 2_000);
+
+      const t1 = new Date('2026-10-30T12:00:05.000Z');
+      tx.recordDeferRetry(t1);
+      expect(tx.pendingAttemptCount).toBe(2);
+      expect(tx.nextAttemptAt?.getTime()).toBe(t1.getTime() + 4_000);
     });
   });
 });

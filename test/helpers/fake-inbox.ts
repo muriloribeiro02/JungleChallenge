@@ -5,7 +5,12 @@ export class FakeInboxRepository implements InboxMessageRepository {
   items: InboxMessage[] = [];
 
   async tryInsert(message: InboxMessage): Promise<boolean> {
-    if (this.items.some((m) => m.id === message.id)) {
+    if (
+      this.items.some(
+        (m) =>
+          m.id === message.id && m.consumerName === message.consumerName,
+      )
+    ) {
       return false;
     }
     this.items.push(message);

@@ -5,9 +5,8 @@
  * - INSUFFICIENT_FUNDS — saldo insuficiente para débito de aposta.
  *
  * REFUND / ROLLBACK:
- * - REFERENCE_NOT_FOUND — referência externa não encontrada (após esgotar
- *   PENDING_REFERENCE no worker futuro; neste bloco usamos PENDING_REFERENCE
- *   enquanto a referência está ausente).
+ * - REFERENCE_NOT_FOUND — referência ausente após TTL 24h de PENDING_REFERENCE
+ *   (worker C2); enquanto dentro do TTL permanece PENDING_REFERENCE.
  * - INVALID_REFERENCE_TYPE — kind da referência não permitido para a operação.
  * - REFERENCE_SCOPE_MISMATCH — provider/player/wallet/currency/round divergem.
  * - REFERENCE_AMOUNT_MISMATCH — amount ≠ amount da referência.

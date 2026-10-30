@@ -1,5 +1,23 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { promisify } from 'node:util';
 import { createDbClient } from '../helpers/db';
+
+const execFileAsync = promisify(execFile);
+
+/** Raiz do repo (cwd dos testes multi-instance). */
+export const REPO_ROOT = process.cwd();
+
+export async function dockerCompose(
+  args: string[],
+  options?: { env?: NodeJS.ProcessEnv },
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync('docker', ['compose', ...args], {
+    cwd: REPO_ROOT,
+    maxBuffer: 10 * 1024 * 1024,
+    env: options?.env ?? process.env,
+  });
+}
 
 export const MULTI_INSTANCE_BASES = [
   process.env.MULTI_INSTANCE_URL_1 ?? 'http://127.0.0.1:3001',
@@ -12,6 +30,7 @@ export type LiveInfo = {
   instanceId: string;
   pid: number;
   workersEnabled: boolean;
+  stopping?: boolean;
 };
 
 export async function fetchJson<T>(
@@ -125,6 +144,41 @@ export async function submitBet(
   });
 }
 
+export async function submitRefund(
+  base: string,
+  input: {
+    providerId: string;
+    playerId: string;
+    walletId: string;
+    amount: string;
+    idempotencyKey: string;
+    externalTransactionId?: string;
+    referenceExternalTransactionId: string;
+    roundId?: string;
+  },
+): Promise<{ status: number; body: Record<string, unknown>; base: string }> {
+  const externalTransactionId =
+    input.externalTransactionId ?? randomUUID();
+  return fetchJson(`${base}/wagering/transactions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': input.idempotencyKey,
+    },
+    body: JSON.stringify({
+      providerId: input.providerId,
+      externalTransactionId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      roundId: input.roundId ?? 'round-multi',
+      gameId: 'fortune-chimp',
+      kind: 'REFUND',
+      money: { amount: input.amount, currency: 'BRL' },
+      referenceExternalTransactionId: input.referenceExternalTransactionId,
+    }),
+  });
+}
+
 export async function assertBalanceEqualsLedger(
   walletId: string,
 ): Promise<{ stored: string; calculated: string }> {
@@ -175,7 +229,7 @@ export async function cleanupWallets(walletIds: string[]): Promise<void> {
       `
         DELETE FROM inbox_message
         WHERE id IN (
-          SELECT id FROM outbox_message
+          SELECT id::text FROM outbox_message
           WHERE aggregate_id = ANY($1::uuid[])
              OR aggregate_id IN (
                SELECT id FROM wager_transaction WHERE wallet_id = ANY($1::uuid[])

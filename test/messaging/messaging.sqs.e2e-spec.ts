@@ -122,7 +122,7 @@ describe('Messaging Outbox/Inbox + SQS (e2e)', () => {
       await qr.query(`SET LOCAL session_replication_role = 'replica'`);
       await qr.query(
         `DELETE FROM inbox_message WHERE id IN (
-           SELECT id FROM outbox_message WHERE aggregate_id IN (
+           SELECT id::text FROM outbox_message WHERE aggregate_id IN (
              SELECT id FROM wager_transaction WHERE wallet_id = ANY($1::uuid[])
            )
          )`,

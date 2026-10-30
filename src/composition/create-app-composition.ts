@@ -1,5 +1,6 @@
 import type { DataSource } from 'typeorm';
 import { DomainEventHandler } from '../application/messaging/domain-event-handler';
+import { InboundWagerConsumer } from '../application/messaging/inbound-wager-consumer';
 import { InboxConsumer } from '../application/messaging/inbox-consumer';
 import { OutboxPublisher } from '../application/messaging/outbox-publisher';
 import type { MessageBus } from '../application/ports/message-bus';
@@ -13,6 +14,7 @@ import { ReconcileWalletUseCase } from '../application/use-cases/wallet/reconcil
 import { GetWagerTransactionUseCase } from '../application/use-cases/wager/get-wager-transaction.use-case';
 import { PlaceBetUseCase } from '../application/use-cases/wager/place-bet.use-case';
 import { RefundWagerUseCase } from '../application/use-cases/wager/refund-wager.use-case';
+import { ProcessPendingReferencesUseCase } from '../application/use-cases/wager/process-pending-references.use-case';
 import { ReprocessPendingReferencesUseCase } from '../application/use-cases/wager/reprocess-pending-references.use-case';
 import { RollbackWagerUseCase } from '../application/use-cases/wager/rollback-wager.use-case';
 import { SettleLossUseCase } from '../application/use-cases/wager/settle-loss.use-case';
@@ -41,11 +43,14 @@ export type AppComposition = {
   refundWager: RefundWagerUseCase;
   rollbackWager: RollbackWagerUseCase;
   reprocessPending: ReprocessPendingReferencesUseCase;
+  processPendingReferences: ProcessPendingReferencesUseCase;
   submitWagerTransaction: SubmitWagerTransactionUseCase;
   getWagerTransaction: GetWagerTransactionUseCase;
   domainEventHandler: DomainEventHandler;
   outboxPublisher: OutboxPublisher;
   inboxConsumer: InboxConsumer;
+  inboundWagerConsumer: InboundWagerConsumer;
+  inboundMessageBus: MessageBus;
 };
 
 /**
@@ -55,6 +60,7 @@ export type AppComposition = {
 export function createAppComposition(dataSource: DataSource): AppComposition {
   const unitOfWork = new TypeOrmUnitOfWork(dataSource);
   const messageBus = SqsMessageBus.fromEnv(sqsEnv.mainQueueUrl);
+  const inboundMessageBus = SqsMessageBus.fromEnv(sqsEnv.inboundQueueUrl);
   const logger = new ConsoleMessagingLogger();
   const walletRepo = new TypeOrmWalletRepository(
     dataSource.getRepository(WalletOrmEntity),
@@ -71,6 +77,15 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
   const refundWager = new RefundWagerUseCase(unitOfWork);
   const rollbackWager = new RollbackWagerUseCase(unitOfWork);
   const reprocessPending = new ReprocessPendingReferencesUseCase(unitOfWork);
+  const processPendingReferences = new ProcessPendingReferencesUseCase(
+    unitOfWork,
+    reprocessPending,
+    logger,
+    {
+      batchSize: Number(process.env.PENDING_REFERENCE_BATCH_SIZE ?? 10),
+      leaseSeconds: Number(process.env.PENDING_REFERENCE_LEASE_SECONDS ?? 30),
+    },
+  );
   const submitWagerTransaction = new SubmitWagerTransactionUseCase(
     unitOfWork,
     placeBet,
@@ -98,10 +113,22 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
     },
   );
 
+  const inboundWagerConsumer = new InboundWagerConsumer(
+    inboundMessageBus,
+    unitOfWork,
+    submitWagerTransaction,
+    logger,
+    {
+      maxMessages: sqsEnv.receiveMaxMessages,
+      waitSeconds: sqsEnv.receiveWaitSeconds,
+    },
+  );
+
   return {
     dataSource,
     unitOfWork,
     messageBus,
+    inboundMessageBus,
     logger,
     openWallet,
     getWallet,
@@ -114,10 +141,12 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
     refundWager,
     rollbackWager,
     reprocessPending,
+    processPendingReferences,
     submitWagerTransaction,
     getWagerTransaction,
     domainEventHandler,
     outboxPublisher,
     inboxConsumer,
+    inboundWagerConsumer,
   };
 }

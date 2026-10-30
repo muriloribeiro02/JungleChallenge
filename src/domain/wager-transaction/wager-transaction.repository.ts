@@ -29,6 +29,16 @@ export interface WagerTransactionRepository {
   findById(id: string): Promise<WagerTransaction | null>;
   /** SELECT FOR UPDATE da linha wager_transaction. */
   findByIdForUpdate(id: string): Promise<WagerTransaction | null>;
+  /**
+   * Reserva pendências elegíveis (due ou TTL expirado) com FOR UPDATE SKIP LOCKED.
+   * Define locked_until (lease). Não incrementa pending_attempt_count —
+   * a contagem sobe só em defer (recordDeferRetry), comum a Inbox e worker.
+   * Expiração (pending_reference_at + 24h) prevalece sobre next_attempt_at futuro.
+   */
+  claimDuePendingReferences(
+    limit: number,
+    leaseSeconds: number,
+  ): Promise<WagerTransaction[]>;
 }
 
 export const WAGER_TRANSACTION_REPOSITORY = Symbol(

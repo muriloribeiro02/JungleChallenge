@@ -121,4 +121,24 @@ export class WagerTransactionOrmEntity {
 
   @Column({ name: 'updated_at', type: 'timestamptz' })
   updatedAt!: Date;
+
+  @Column({
+    name: 'pending_reference_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  pendingReferenceAt!: Date | null;
+
+  @Column({
+    name: 'pending_attempt_count',
+    type: 'integer',
+    default: 0,
+  })
+  pendingAttemptCount!: number;
+
+  @Column({ name: 'next_attempt_at', type: 'timestamptz', nullable: true })
+  nextAttemptAt!: Date | null;
+
+  @Column({ name: 'locked_until', type: 'timestamptz', nullable: true })
+  lockedUntil!: Date | null;
 }

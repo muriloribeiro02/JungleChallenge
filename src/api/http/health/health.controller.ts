@@ -9,6 +9,7 @@ import {
   APP_COMPOSITION,
   type AppCompositionToken,
 } from '../../../composition/tokens';
+import { MessagingWorkersHost } from '../../../infrastructure/messaging/messaging-workers.host';
 import { SqsMessageBus } from '../../../infrastructure/messaging/sqs-message-bus';
 import { sqsEnv } from '../../../infrastructure/messaging/sqs.env';
 
@@ -16,26 +17,38 @@ import { sqsEnv } from '../../../infrastructure/messaging/sqs.env';
 export class HealthController {
   constructor(
     @Inject(APP_COMPOSITION) private readonly app: AppCompositionToken,
+    private readonly workers: MessagingWorkersHost,
   ) {}
 
   @Get('live')
   live(): {
-    status: 'ok';
+    status: 'ok' | 'stopping';
     instanceId: string;
     pid: number;
     workersEnabled: boolean;
+    stopping: boolean;
   } {
+    const stopping = this.workers.isStopping;
     return {
-      status: 'ok',
+      status: stopping ? 'stopping' : 'ok',
       instanceId: process.env.INSTANCE_ID ?? `pid-${process.pid}`,
       pid: process.pid,
       workersEnabled:
         (process.env.WORKERS_ENABLED ?? 'false').toLowerCase() === 'true',
+      stopping,
     };
   }
 
   @Get('ready')
   async ready(): Promise<{ status: 'ok'; postgres: boolean; sqs: boolean }> {
+    if (this.workers.isStopping) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        error: 'SHUTTING_DOWN',
+        message: 'Instância em graceful shutdown',
+      });
+    }
+
     const dataSource = this.app.dataSource as DataSource;
     let postgres = false;
     let sqs = false;

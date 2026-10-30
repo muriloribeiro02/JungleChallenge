@@ -5,6 +5,7 @@ export class InboxMessageMapper {
   static toPersistence(message: InboxMessage): InboxMessageOrmEntity {
     const row = new InboxMessageOrmEntity();
     row.id = message.id;
+    row.consumerName = message.consumerName;
     row.eventType = message.eventType;
     row.transportMessageId = message.transportMessageId;
     row.receivedAt = message.receivedAt;
@@ -15,6 +16,7 @@ export class InboxMessageMapper {
   static toDomain(row: InboxMessageOrmEntity): InboxMessage {
     return InboxMessage.rehydrate({
       id: row.id,
+      consumerName: row.consumerName,
       eventType: row.eventType,
       transportMessageId: row.transportMessageId,
       receivedAt: row.receivedAt,

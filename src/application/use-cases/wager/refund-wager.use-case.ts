@@ -24,7 +24,10 @@ import {
   buildWagerTransactionPendingReferenceEvent,
   buildWagerTransactionRejectedEvent,
 } from '../../events/wager-outcome.events';
-import type { UnitOfWork } from '../../ports/unit-of-work';
+import type {
+  TransactionalRepositories,
+  UnitOfWork,
+} from '../../ports/unit-of-work';
 import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import {
   computeRefundPayloadHash,
@@ -65,7 +68,7 @@ export type RefundWagerOutput = {
   walletVersion?: number;
 };
 
-type Repos = Parameters<Parameters<UnitOfWork['run']>[0]>[0];
+type Repos = TransactionalRepositories;
 
 /**
  * RefundWagerUseCase — reverte BET PROCESSED (CREDIT).
@@ -73,6 +76,40 @@ type Repos = Parameters<Parameters<UnitOfWork['run']>[0]>[0];
  */
 export class RefundWagerUseCase {
   constructor(private readonly unitOfWork: UnitOfWork) {}
+
+  async executeWithRepos(
+    repos: TransactionalRepositories,
+    input: RefundWagerInput,
+  ): Promise<RefundWagerOutput> {
+    this.assertInput(input);
+
+    const amount = Money.from({
+      amount: input.amount,
+      currency: input.currency,
+    });
+
+    if (!amount.isPositive()) {
+      throw new InvalidRefundWagerInputError(
+        'amount do REFUND deve ser positivo',
+      );
+    }
+
+    const businessPayload: RefundBusinessPayload = {
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: amount.toString(),
+      currency: amount.currency,
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      kind: 'REFUND',
+      referenceExternalTransactionId: input.referenceExternalTransactionId,
+    };
+    const payloadHash = computeRefundPayloadHash(businessPayload);
+
+    return this.processRefund(repos, input, amount, payloadHash);
+  }
 
   async execute(input: RefundWagerInput): Promise<RefundWagerOutput> {
     this.assertInput(input);

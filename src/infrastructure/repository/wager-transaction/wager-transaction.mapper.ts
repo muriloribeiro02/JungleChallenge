@@ -56,6 +56,10 @@ export class WagerTransactionMapper {
     row.observedWalletVersion = transaction.observedWalletVersion;
     row.createdAt = transaction.createdAt;
     row.updatedAt = transaction.updatedAt;
+    row.pendingReferenceAt = transaction.pendingReferenceAt;
+    row.pendingAttemptCount = transaction.pendingAttemptCount;
+    row.nextAttemptAt = transaction.nextAttemptAt;
+    row.lockedUntil = transaction.lockedUntil;
     return row;
   }
 
@@ -106,6 +110,10 @@ export class WagerTransactionMapper {
       observedWalletVersion: row.observedWalletVersion,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+      pendingReferenceAt: row.pendingReferenceAt,
+      pendingAttemptCount: row.pendingAttemptCount ?? 0,
+      nextAttemptAt: row.nextAttemptAt,
+      lockedUntil: row.lockedUntil,
     });
   }
 }

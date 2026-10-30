@@ -1,4 +1,11 @@
-import type { UnitOfWork } from '../../ports/unit-of-work';
+import {
+  ExternalTransactionIdConflictError,
+  IdempotencyKeyConflictError,
+} from '../../../domain/wager-transaction/wager-transaction.errors';
+import type {
+  TransactionalRepositories,
+  UnitOfWork,
+} from '../../ports/unit-of-work';
 import type { PlaceBetUseCase } from './place-bet.use-case';
 import type { RefundWagerUseCase } from './refund-wager.use-case';
 import type { RollbackWagerUseCase } from './rollback-wager.use-case';
@@ -31,8 +38,8 @@ export type SubmitWagerTransactionOutput = {
 };
 
 /**
- * Fachada HTTP → use cases existentes por kind.
- * Decide idempotentReplay consultando a chave antes da execução.
+ * Fachada HTTP/SQS inbound → use cases por kind.
+ * `executeWithRepos` permite Inbox + efeito + outbox na mesma TX (§11).
  */
 export class SubmitWagerTransactionUseCase {
   constructor(
@@ -44,22 +51,22 @@ export class SubmitWagerTransactionUseCase {
     private readonly rollbackWager: RollbackWagerUseCase,
   ) {}
 
-  async execute(
+  async executeWithRepos(
+    repos: TransactionalRepositories,
     input: SubmitWagerTransactionInput,
   ): Promise<SubmitWagerTransactionOutput> {
     this.assertInput(input);
 
-    const prior = await this.unitOfWork.run((repos) =>
-      repos.wagerTransactions.findByProviderIdAndIdempotencyKey(
+    const prior =
+      await repos.wagerTransactions.findByProviderIdAndIdempotencyKey(
         input.providerId,
         input.idempotencyKey,
-      ),
-    );
+      );
     const idempotentReplay = prior !== null;
 
     switch (input.kind) {
       case 'BET': {
-        const result = await this.placeBet.execute({
+        const result = await this.placeBet.executeWithRepos(repos, {
           providerId: input.providerId,
           playerId: input.playerId,
           walletId: input.walletId,
@@ -82,7 +89,7 @@ export class SubmitWagerTransactionUseCase {
         };
       }
       case 'WIN': {
-        const result = await this.settleWin.execute({
+        const result = await this.settleWin.executeWithRepos(repos, {
           providerId: input.providerId,
           playerId: input.playerId,
           walletId: input.walletId,
@@ -104,7 +111,7 @@ export class SubmitWagerTransactionUseCase {
         };
       }
       case 'LOSS': {
-        const result = await this.settleLoss.execute({
+        const result = await this.settleLoss.executeWithRepos(repos, {
           providerId: input.providerId,
           playerId: input.playerId,
           walletId: input.walletId,
@@ -131,7 +138,7 @@ export class SubmitWagerTransactionUseCase {
             'referenceExternalTransactionId é obrigatório para REFUND',
           );
         }
-        const result = await this.refundWager.execute({
+        const result = await this.refundWager.executeWithRepos(repos, {
           providerId: input.providerId,
           playerId: input.playerId,
           walletId: input.walletId,
@@ -163,7 +170,7 @@ export class SubmitWagerTransactionUseCase {
             'referenceExternalTransactionId é obrigatório para ROLLBACK',
           );
         }
-        const result = await this.rollbackWager.execute({
+        const result = await this.rollbackWager.executeWithRepos(repos, {
           providerId: input.providerId,
           playerId: input.playerId,
           walletId: input.walletId,
@@ -191,6 +198,26 @@ export class SubmitWagerTransactionUseCase {
       }
       default:
         throw new UnsupportedWagerKindError(String(input.kind));
+    }
+  }
+
+  async execute(
+    input: SubmitWagerTransactionInput,
+  ): Promise<SubmitWagerTransactionOutput> {
+    try {
+      return await this.unitOfWork.run((repos) =>
+        this.executeWithRepos(repos, input),
+      );
+    } catch (error) {
+      if (error instanceof IdempotencyKeyConflictError) {
+        return this.unitOfWork.run((repos) =>
+          this.executeWithRepos(repos, input),
+        );
+      }
+      if (error instanceof ExternalTransactionIdConflictError) {
+        throw error;
+      }
+      throw error;
     }
   }
 

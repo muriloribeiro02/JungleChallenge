@@ -2,7 +2,10 @@ import { Column, Entity, PrimaryColumn } from 'typeorm';
 
 @Entity({ name: 'inbox_message' })
 export class InboxMessageOrmEntity {
-  @PrimaryColumn({ type: 'uuid' })
+  @PrimaryColumn({ name: 'consumer_name', type: 'varchar', length: 128 })
+  consumerName!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 255 })
   id!: string;
 
   @Column({ name: 'event_type', type: 'varchar', length: 128 })

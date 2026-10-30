@@ -18,7 +18,10 @@ import {
   buildWalletBalanceChangedEvent,
 } from '../../events/wallet-balance.events';
 import { buildWagerTransactionRejectedEvent } from '../../events/wager-outcome.events';
-import type { UnitOfWork } from '../../ports/unit-of-work';
+import type {
+  TransactionalRepositories,
+  UnitOfWork,
+} from '../../ports/unit-of-work';
 import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import {
   computeBetPayloadHash,
@@ -72,6 +75,41 @@ export type PlaceBetOutput = {
 export class PlaceBetUseCase {
   constructor(private readonly unitOfWork: UnitOfWork) {}
 
+  /**
+   * Processa na UoW do caller (ex.: Inbox inbound + efeito + outbox atômicos).
+   * Não abre transação própria e não recupera 23505 — o caller decide.
+   */
+  async executeWithRepos(
+    repos: TransactionalRepositories,
+    input: PlaceBetInput,
+  ): Promise<PlaceBetOutput> {
+    this.assertInput(input);
+
+    const amount = Money.from({
+      amount: input.amount,
+      currency: input.currency,
+    });
+
+    if (!amount.isPositive()) {
+      throw new InvalidPlaceBetInputError('amount da BET deve ser positivo');
+    }
+
+    const businessPayload: BetBusinessPayload = {
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: amount.toString(),
+      currency: amount.currency,
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      kind: 'BET',
+    };
+    const payloadHash = computeBetPayloadHash(businessPayload);
+
+    return this.processBet(repos, input, amount, payloadHash);
+  }
+
   async execute(input: PlaceBetInput): Promise<PlaceBetOutput> {
     this.assertInput(input);
 
@@ -123,7 +161,7 @@ export class PlaceBetUseCase {
   }
 
   private async processBet(
-    repos: Parameters<Parameters<UnitOfWork['run']>[0]>[0],
+    repos: TransactionalRepositories,
     input: PlaceBetInput,
     amount: Money,
     payloadHash: string,

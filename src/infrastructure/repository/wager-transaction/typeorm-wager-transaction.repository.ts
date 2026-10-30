@@ -1,4 +1,4 @@
-import { QueryFailedError, type Repository } from 'typeorm';
+import { QueryFailedError, type EntityManager, type Repository } from 'typeorm';
 import type { WagerTransaction } from '../../../domain/wager-transaction/wager-transaction.entity';
 import {
   ExternalTransactionIdConflictError,
@@ -24,6 +24,7 @@ export class TypeOrmWagerTransactionRepository
 {
   constructor(
     private readonly transactions: Repository<WagerTransactionOrmEntity>,
+    private readonly manager?: EntityManager,
   ) {}
 
   async save(transaction: WagerTransaction): Promise<void> {
@@ -133,6 +134,104 @@ export class TypeOrmWagerTransactionRepository
     }
     return WagerTransactionMapper.toDomain(row);
   }
+
+  async claimDuePendingReferences(
+    limit: number,
+    leaseSeconds: number,
+  ): Promise<WagerTransaction[]> {
+    const em = this.manager ?? this.transactions.manager;
+    const result: unknown = await em.query(
+      `
+        WITH cte AS (
+          SELECT id
+          FROM wager_transaction
+          WHERE status = 'PENDING_REFERENCE'
+            AND pending_reference_at IS NOT NULL
+            AND (locked_until IS NULL OR locked_until < NOW())
+            AND (
+              pending_reference_at + INTERVAL '24 hours' <= NOW()
+              OR next_attempt_at IS NULL
+              OR next_attempt_at <= NOW()
+            )
+          ORDER BY pending_reference_at ASC, id ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT $1
+        )
+        UPDATE wager_transaction AS t
+        SET
+          locked_until = NOW() + make_interval(secs => $2),
+          updated_at = NOW()
+        FROM cte
+        WHERE t.id = cte.id
+        RETURNING
+          t.id,
+          t.wallet_id AS "walletId",
+          t.player_id AS "playerId",
+          t.kind,
+          t.status,
+          t.amount,
+          t.currency,
+          t.provider_id AS "providerId",
+          t.external_transaction_id AS "externalTransactionId",
+          t.idempotency_key AS "idempotencyKey",
+          t.payload_hash AS "payloadHash",
+          t.round_id AS "roundId",
+          t.game_id AS "gameId",
+          t.external_reference AS "externalReference",
+          t.resolved_internal_reference AS "resolvedInternalReference",
+          t.failure_code AS "failureCode",
+          t.observed_balance AS "observedBalance",
+          t.observed_wallet_version AS "observedWalletVersion",
+          t.created_at AS "createdAt",
+          t.updated_at AS "updatedAt",
+          t.pending_reference_at AS "pendingReferenceAt",
+          t.pending_attempt_count AS "pendingAttemptCount",
+          t.next_attempt_at AS "nextAttemptAt",
+          t.locked_until AS "lockedUntil"
+      `,
+      [limit, leaseSeconds],
+    );
+
+    const rows = unwrapReturningRows(result);
+    return rows.map((row) =>
+      WagerTransactionMapper.toDomain({
+        id: row.id,
+        walletId: row.walletId,
+        playerId: row.playerId,
+        kind: row.kind,
+        status: row.status,
+        amount: row.amount,
+        currency: row.currency,
+        providerId: row.providerId,
+        externalTransactionId: row.externalTransactionId,
+        idempotencyKey: row.idempotencyKey,
+        payloadHash: row.payloadHash,
+        roundId: row.roundId,
+        gameId: row.gameId,
+        externalReference: row.externalReference,
+        resolvedInternalReference: row.resolvedInternalReference,
+        failureCode: row.failureCode,
+        observedBalance: row.observedBalance,
+        observedWalletVersion: row.observedWalletVersion,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        pendingReferenceAt: row.pendingReferenceAt,
+        pendingAttemptCount: Number(row.pendingAttemptCount),
+        nextAttemptAt: row.nextAttemptAt,
+        lockedUntil: row.lockedUntil,
+      } as WagerTransactionOrmEntity),
+    );
+  }
+}
+
+function unwrapReturningRows(result: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(result)) {
+    if (result.length === 2 && Array.isArray(result[0])) {
+      return result[0] as Array<Record<string, unknown>>;
+    }
+    return result as Array<Record<string, unknown>>;
+  }
+  return [];
 }
 
 function getUniqueViolationIndexName(error: unknown): string | null {

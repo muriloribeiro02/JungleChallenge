@@ -107,6 +107,8 @@ describe('wallet migrations (e2e ida e volta)', () => {
       'OutboxClaimLockedUntil1761690008000',
       'CreateInboxMessageTable1761690009000',
       'UniqueAnyProcessedReversalPerReference1761690010000',
+      'InboxConsumerNameAndMessageId1761690011000',
+      'PendingReferenceTtlAndClaim1793380707372',
     ]);
     expect(await tableExists('wallet')).toBe(true);
     expect(await tableExists('wager_transaction')).toBe(true);

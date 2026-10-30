@@ -5,8 +5,16 @@ x-app-env: &app_env
   WORKERS_ENABLED: "true"
   WORKER_OUTBOX_INTERVAL_MS: "400"
   WORKER_INBOX_INTERVAL_MS: "400"
+  WORKER_INBOUND_INTERVAL_MS: "400"
+  WORKER_PENDING_INTERVAL_MS: "300"
+  PENDING_REFERENCE_BATCH_SIZE: "10"
+  PENDING_REFERENCE_LEASE_SECONDS: "15"
   OUTBOX_CLAIM_LEASE_SECONDS: ${OUTBOX_CLAIM_LEASE_SECONDS:-60}
+  SHUTDOWN_DRAIN_MS: ${SHUTDOWN_DRAIN_MS:-10000}
+  # Probe C3 (0 em prod): hold ininterrupto para forçar drain_timeout em teste
+  SHUTDOWN_TEST_HOLD_MS: ${SHUTDOWN_TEST_HOLD_MS:-0}
   DATABASE_HOST: postgres
+
   DATABASE_PORT: "5432"
   DATABASE_USER: ${DATABASE_USER}
   DATABASE_PASSWORD: ${DATABASE_PASSWORD}
@@ -17,6 +25,8 @@ x-app-env: &app_env
   AWS_SECRET_ACCESS_KEY: test
   SQS_MAIN_QUEUE_URL: http://localstack:4566/000000000000/jungle-wager-events
   SQS_DLQ_URL: http://localstack:4566/000000000000/jungle-wager-events-dlq
+  SQS_INBOUND_QUEUE_URL: http://localstack:4566/000000000000/jungle-wager-transactions.fifo
+  SQS_INBOUND_DLQ_URL: http://localstack:4566/000000000000/jungle-wager-transactions-dlq.fifo
   SQS_VISIBILITY_TIMEOUT_SECONDS: ${SQS_VISIBILITY_TIMEOUT_SECONDS:-30}
   SQS_MAX_RECEIVE_COUNT: ${SQS_MAX_RECEIVE_COUNT:-5}
   SQS_RECEIVE_WAIT_SECONDS: "1"
@@ -79,13 +89,16 @@ services:
         condition: service_healthy
     profiles: ["migrate"]
 
-  # Fase B — três processos independentes (mesma imagem, mesmo PG e SQS)
+  # Fase B/C — três processos independentes (mesma imagem, mesmo PG e SQS)
   app-1: &app
     build:
       context: .
       dockerfile: Dockerfile
     image: jungle-wagering-app:local
     restart: unless-stopped
+    # >= SHUTDOWN_DRAIN_MS para Nest drenar ticks antes do SIGKILL do Docker
+    stop_grace_period: 15s
+    stop_signal: SIGTERM
     environment:
       <<: *app_env
       INSTANCE_ID: app-1

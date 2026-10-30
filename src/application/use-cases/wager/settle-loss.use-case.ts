@@ -11,7 +11,10 @@ import {
   IdempotencyKeyConflictError,
 } from '../../../domain/wager-transaction/wager-transaction.errors';
 import { buildWagerTransactionProcessedEvent } from '../../events/wallet-balance.events';
-import type { UnitOfWork } from '../../ports/unit-of-work';
+import type {
+  TransactionalRepositories,
+  UnitOfWork,
+} from '../../ports/unit-of-work';
 import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import {
   computeLossPayloadHash,
@@ -57,6 +60,38 @@ export type SettleLossOutput = {
  */
 export class SettleLossUseCase {
   constructor(private readonly unitOfWork: UnitOfWork) {}
+
+  async executeWithRepos(
+    repos: TransactionalRepositories,
+    input: SettleLossInput,
+  ): Promise<SettleLossOutput> {
+    this.assertInput(input);
+
+    const amount = Money.zero(input.currency);
+    const provided = Money.from({
+      amount: input.amount,
+      currency: input.currency,
+    });
+
+    if (!provided.isZero()) {
+      throw new InvalidSettleLossInputError('amount da LOSS deve ser zero');
+    }
+
+    const businessPayload: LossBusinessPayload = {
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: amount.toString(),
+      currency: amount.currency,
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      kind: 'LOSS',
+    };
+    const payloadHash = computeLossPayloadHash(businessPayload);
+
+    return this.processLoss(repos, input, amount, payloadHash);
+  }
 
   async execute(input: SettleLossInput): Promise<SettleLossOutput> {
     this.assertInput(input);
@@ -110,7 +145,7 @@ export class SettleLossUseCase {
   }
 
   private async processLoss(
-    repos: Parameters<Parameters<UnitOfWork['run']>[0]>[0],
+    repos: TransactionalRepositories,
     input: SettleLossInput,
     amount: Money,
     payloadHash: string,
