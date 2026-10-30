@@ -10,9 +10,9 @@ import { createHash } from 'node:crypto';
  * providerId, externalTransactionId, playerId, walletId, roundId, gameId,
  * kind, amount, currency.
  *
- * BET mantém o shape flat histórico (amount + currency) para não alterar
- * silenciosamente hashes já persistidos. WIN/LOSS usam o mesmo conjunto de
- * campos e o mesmo algoritmo, apenas com kind distinto.
+ * BET/WIN/LOSS mantêm o shape flat histórico (amount + currency) para não
+ * alterar silenciosamente hashes já persistidos. REFUND/ROLLBACK incluem
+ * referenceExternalTransactionId além dos mesmos campos base.
  */
 export type ExternalWagerBusinessPayload = {
   providerId: string;
@@ -23,7 +23,9 @@ export type ExternalWagerBusinessPayload = {
   roundId: string;
   gameId: string;
   externalTransactionId: string;
-  kind: 'BET' | 'WIN' | 'LOSS';
+  kind: 'BET' | 'WIN' | 'LOSS' | 'REFUND' | 'ROLLBACK';
+  /** Presente somente em REFUND/ROLLBACK — não entra no hash de BET/WIN/LOSS. */
+  referenceExternalTransactionId?: string;
 };
 
 export type BetBusinessPayload = ExternalWagerBusinessPayload & {
@@ -36,6 +38,16 @@ export type WinBusinessPayload = ExternalWagerBusinessPayload & {
 
 export type LossBusinessPayload = ExternalWagerBusinessPayload & {
   kind: 'LOSS';
+};
+
+export type RefundBusinessPayload = ExternalWagerBusinessPayload & {
+  kind: 'REFUND';
+  referenceExternalTransactionId: string;
+};
+
+export type RollbackBusinessPayload = ExternalWagerBusinessPayload & {
+  kind: 'ROLLBACK';
+  referenceExternalTransactionId: string;
 };
 
 /** JSON canônico com chaves ordenadas + SHA-256 hex. */
@@ -55,6 +67,18 @@ export function computeWinPayloadHash(payload: WinBusinessPayload): string {
 }
 
 export function computeLossPayloadHash(payload: LossBusinessPayload): string {
+  return computeExternalWagerPayloadHash(payload);
+}
+
+export function computeRefundPayloadHash(
+  payload: RefundBusinessPayload,
+): string {
+  return computeExternalWagerPayloadHash(payload);
+}
+
+export function computeRollbackPayloadHash(
+  payload: RollbackBusinessPayload,
+): string {
   return computeExternalWagerPayloadHash(payload);
 }
 

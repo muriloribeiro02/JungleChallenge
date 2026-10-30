@@ -8,11 +8,14 @@ import {
 } from '../helpers/db';
 import { createMigrationDataSource } from '../helpers/migration-data-source';
 import { AddResultSnapshotToWagerTransaction1761690005000 } from '../../src/infrastructure/database/migrations/006-Add_result_snapshot_to_wager_transaction';
+import { RefundRollbackPendingAndUniqueReversal1761690006000 } from '../../src/infrastructure/database/migrations/007-Refund_rollback_pending_and_unique_reversal';
 
 describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
   let dataSource: DataSource;
   const migrationName = new AddResultSnapshotToWagerTransaction1761690005000()
     .name;
+  const migration007Name =
+    new RefundRollbackPendingAndUniqueReversal1761690006000().name;
 
   async function columnExists(columnName: string): Promise<boolean> {
     const client = createDbClient();
@@ -61,25 +64,35 @@ describe('AddResultSnapshotToWagerTransaction migration (e2e)', () => {
     }
   });
 
+  async function undoUntilSnapshotRemoved(): Promise<void> {
+    while (await columnExists('observed_balance')) {
+      await dataSource.undoLastMigration();
+    }
+  }
+
   it('up adiciona colunas nullable; down remove colunas; reaplicar restaura', async () => {
     expect(await columnExists('observed_balance')).toBe(true);
     expect(await columnExists('observed_wallet_version')).toBe(true);
     expect(await migrationIsRecorded(migrationName)).toBe(true);
 
-    await dataSource.undoLastMigration();
+    await undoUntilSnapshotRemoved();
 
     expect(await columnExists('observed_balance')).toBe(false);
     expect(await columnExists('observed_wallet_version')).toBe(false);
     expect(await migrationIsRecorded(migrationName)).toBe(false);
+    expect(await migrationIsRecorded(migration007Name)).toBe(false);
 
     const applied = await dataSource.runMigrations();
-    expect(applied.map((m) => m.name)).toEqual([migrationName]);
+    expect(applied.map((m) => m.name)).toEqual([
+      migrationName,
+      migration007Name,
+    ]);
     expect(await columnExists('observed_balance')).toBe(true);
     expect(await columnExists('observed_wallet_version')).toBe(true);
   });
 
   it('backfill preenche observed_balance só via ledger em PROCESSED; version permanece NULL', async () => {
-    await dataSource.undoLastMigration();
+    await undoUntilSnapshotRemoved();
     expect(await columnExists('observed_balance')).toBe(false);
 
     const client = createDbClient();

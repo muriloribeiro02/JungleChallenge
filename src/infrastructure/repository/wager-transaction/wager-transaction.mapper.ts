@@ -1,10 +1,13 @@
 import Decimal from 'decimal.js';
 import {
+  WAGER_TRANSACTION_STATUS_PENDING_REFERENCE,
   WAGER_TRANSACTION_STATUS_PROCESSED,
   WAGER_TRANSACTION_STATUS_REJECTED,
   WAGER_TRANSACTION_TYPE_BET,
   WAGER_TRANSACTION_TYPE_LOSS,
   WAGER_TRANSACTION_TYPE_OPENING,
+  WAGER_TRANSACTION_TYPE_REFUND,
+  WAGER_TRANSACTION_TYPE_ROLLBACK,
   WAGER_TRANSACTION_TYPE_WIN,
   WagerTransaction,
   type WagerFailureCode,
@@ -12,6 +15,21 @@ import {
   type WagerTransactionStatus,
 } from '../../../domain/wager-transaction/wager-transaction.entity';
 import { WagerTransactionOrmEntity } from './wager-transaction.orm-entity';
+
+const SUPPORTED_KINDS = new Set<string>([
+  WAGER_TRANSACTION_TYPE_OPENING,
+  WAGER_TRANSACTION_TYPE_BET,
+  WAGER_TRANSACTION_TYPE_WIN,
+  WAGER_TRANSACTION_TYPE_LOSS,
+  WAGER_TRANSACTION_TYPE_REFUND,
+  WAGER_TRANSACTION_TYPE_ROLLBACK,
+]);
+
+const SUPPORTED_STATUSES = new Set<string>([
+  WAGER_TRANSACTION_STATUS_PENDING_REFERENCE,
+  WAGER_TRANSACTION_STATUS_PROCESSED,
+  WAGER_TRANSACTION_STATUS_REJECTED,
+]);
 
 export class WagerTransactionMapper {
   static toPersistence(
@@ -31,8 +49,8 @@ export class WagerTransactionMapper {
     row.payloadHash = transaction.payloadHash;
     row.roundId = transaction.roundId;
     row.gameId = transaction.gameId;
-    row.externalReference = null;
-    row.resolvedInternalReference = null;
+    row.externalReference = transaction.externalReference;
+    row.resolvedInternalReference = transaction.resolvedInternalReference;
     row.failureCode = transaction.failureCode;
     row.observedBalance = transaction.observedBalance?.toString() ?? null;
     row.observedWalletVersion = transaction.observedWalletVersion;
@@ -45,21 +63,13 @@ export class WagerTransactionMapper {
     const kind = row.kind as WagerTransactionKind;
     const status = row.status as WagerTransactionStatus;
 
-    if (
-      kind !== WAGER_TRANSACTION_TYPE_OPENING &&
-      kind !== WAGER_TRANSACTION_TYPE_BET &&
-      kind !== WAGER_TRANSACTION_TYPE_WIN &&
-      kind !== WAGER_TRANSACTION_TYPE_LOSS
-    ) {
+    if (!SUPPORTED_KINDS.has(kind)) {
       throw new Error(
         `WagerTransactionMapper.toDomain: kind não suportado (${row.kind})`,
       );
     }
 
-    if (
-      status !== WAGER_TRANSACTION_STATUS_PROCESSED &&
-      status !== WAGER_TRANSACTION_STATUS_REJECTED
-    ) {
+    if (!SUPPORTED_STATUSES.has(status)) {
       throw new Error(
         `WagerTransactionMapper.toDomain: status não suportado (${row.status})`,
       );
@@ -84,6 +94,8 @@ export class WagerTransactionMapper {
       roundId: row.roundId,
       gameId: row.gameId,
       failureCode: (row.failureCode as WagerFailureCode | null) ?? null,
+      externalReference: row.externalReference,
+      resolvedInternalReference: row.resolvedInternalReference,
       observedBalance:
         row.observedBalance === null
           ? null

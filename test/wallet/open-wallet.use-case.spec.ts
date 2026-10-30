@@ -72,6 +72,35 @@ class InMemoryWagerTransactionRepository
       ) ?? null
     );
   }
+
+  async findByProviderIdAndExternalTransactionId(
+    providerId: string,
+    externalTransactionId: string,
+  ): Promise<WagerTransaction | null> {
+    return (
+      this.items.find(
+        (t) =>
+          t.providerId === providerId &&
+          t.externalTransactionId === externalTransactionId,
+      ) ?? null
+    );
+  }
+
+  async findProcessedReversalByProviderAndExternalReference(
+    kind: 'REFUND' | 'ROLLBACK',
+    providerId: string,
+    externalReference: string,
+  ): Promise<WagerTransaction | null> {
+    return (
+      this.items.find(
+        (t) =>
+          t.kind === kind &&
+          t.status === 'PROCESSED' &&
+          t.providerId === providerId &&
+          t.externalReference === externalReference,
+      ) ?? null
+    );
+  }
 }
 
 class InMemoryLedgerRepository implements WalletLedgerEntryRepository {

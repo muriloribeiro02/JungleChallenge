@@ -3,10 +3,14 @@ import { Money } from '../../src/domain/money/money';
 import type { OperationResultSnapshot } from '../../src/domain/wager-transaction/operation-result-snapshot';
 import {
   FAILURE_CODE_INSUFFICIENT_FUNDS,
+  FAILURE_CODE_INVALID_REFERENCE_TYPE,
+  WAGER_TRANSACTION_STATUS_PENDING_REFERENCE,
   WAGER_TRANSACTION_STATUS_PROCESSED,
   WAGER_TRANSACTION_STATUS_REJECTED,
   WAGER_TRANSACTION_TYPE_BET,
   WAGER_TRANSACTION_TYPE_OPENING,
+  WAGER_TRANSACTION_TYPE_REFUND,
+  WAGER_TRANSACTION_TYPE_WIN,
   WagerTransaction,
 } from '../../src/domain/wager-transaction/wager-transaction.entity';
 import { InvalidWagerTransactionError } from '../../src/domain/wager-transaction/wager-transaction.errors';
@@ -356,6 +360,69 @@ describe('WagerTransaction', () => {
           observedWalletVersion: null,
         }),
       ).toThrow(InvalidWagerTransactionError);
+    });
+  });
+
+  describe('REFUND / ROLLBACK', () => {
+    const playerId = randomUUID();
+    const externalBase = () => ({
+      id: randomUUID(),
+      walletId,
+      playerId,
+      amount: Money.from({ amount: '20.00', currency: 'BRL' }),
+      providerId: 'provider-a',
+      externalTransactionId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      payloadHash: 'hash-rev',
+      roundId: 'round-1',
+      gameId: 'game-1',
+      externalReference: randomUUID(),
+    });
+
+    it('refundPendingReference não carrega snapshot', () => {
+      const tx = WagerTransaction.refundPendingReference(externalBase());
+
+      expect(tx.kind).toBe(WAGER_TRANSACTION_TYPE_REFUND);
+      expect(tx.status).toBe(WAGER_TRANSACTION_STATUS_PENDING_REFERENCE);
+      expect(tx.observedBalance).toBeNull();
+      expect(tx.resolvedInternalReference).toBeNull();
+      expect(tx.isTerminal).toBe(false);
+    });
+
+    it('markProcessed promove PENDING_REFERENCE', () => {
+      const tx = WagerTransaction.refundPendingReference(externalBase());
+      const resolved = randomUUID();
+      tx.markProcessed(resolved, validSnapshot());
+
+      expect(tx.status).toBe(WAGER_TRANSACTION_STATUS_PROCESSED);
+      expect(tx.resolvedInternalReference).toBe(resolved);
+      expect(tx.observedWalletVersion).toBe(1);
+    });
+
+    it('ledgerDirectionForRollback inverte BET/WIN/REFUND', () => {
+      expect(
+        WagerTransaction.ledgerDirectionForRollback(WAGER_TRANSACTION_TYPE_BET),
+      ).toBe('CREDIT');
+      expect(
+        WagerTransaction.ledgerDirectionForRollback(WAGER_TRANSACTION_TYPE_WIN),
+      ).toBe('DEBIT');
+      expect(
+        WagerTransaction.ledgerDirectionForRollback(
+          WAGER_TRANSACTION_TYPE_REFUND,
+        ),
+      ).toBe('DEBIT');
+    });
+
+    it('refundRejected exige failureCode e snapshot', () => {
+      const tx = WagerTransaction.refundRejected({
+        ...externalBase(),
+        resolvedInternalReference: null,
+        failureCode: FAILURE_CODE_INVALID_REFERENCE_TYPE,
+        snapshot: validSnapshot(),
+      });
+
+      expect(tx.status).toBe(WAGER_TRANSACTION_STATUS_REJECTED);
+      expect(tx.failureCode).toBe(FAILURE_CODE_INVALID_REFERENCE_TYPE);
     });
   });
 });

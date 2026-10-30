@@ -3,6 +3,7 @@ import type { WagerTransaction } from '../../../domain/wager-transaction/wager-t
 import {
   ExternalTransactionIdConflictError,
   IdempotencyKeyConflictError,
+  ReferenceAlreadyReversedConflictError,
 } from '../../../domain/wager-transaction/wager-transaction.errors';
 import type { WagerTransactionRepository } from '../../../domain/wager-transaction/wager-transaction.repository';
 import { WagerTransactionMapper } from './wager-transaction.mapper';
@@ -10,6 +11,9 @@ import { WagerTransactionOrmEntity } from './wager-transaction.orm-entity';
 
 const IDEMPOTENCY_UNIQUE_INDEX = 'UQ_wager_transaction_provider_idempotency';
 const EXTERNAL_ID_UNIQUE_INDEX = 'UQ_wager_transaction_provider_external_id';
+const REFUND_PROCESSED_REF_INDEX = 'UQ_wager_transaction_refund_processed_ref';
+const ROLLBACK_PROCESSED_REF_INDEX =
+  'UQ_wager_transaction_rollback_processed_ref';
 
 export class TypeOrmWagerTransactionRepository
   implements WagerTransactionRepository
@@ -31,6 +35,12 @@ export class TypeOrmWagerTransactionRepository
       if (uniqueIndex === EXTERNAL_ID_UNIQUE_INDEX) {
         throw new ExternalTransactionIdConflictError();
       }
+      if (
+        uniqueIndex === REFUND_PROCESSED_REF_INDEX ||
+        uniqueIndex === ROLLBACK_PROCESSED_REF_INDEX
+      ) {
+        throw new ReferenceAlreadyReversedConflictError();
+      }
       throw error;
     }
   }
@@ -41,6 +51,38 @@ export class TypeOrmWagerTransactionRepository
   ): Promise<WagerTransaction | null> {
     const row = await this.transactions.findOne({
       where: { providerId, idempotencyKey },
+    });
+    if (!row) {
+      return null;
+    }
+    return WagerTransactionMapper.toDomain(row);
+  }
+
+  async findByProviderIdAndExternalTransactionId(
+    providerId: string,
+    externalTransactionId: string,
+  ): Promise<WagerTransaction | null> {
+    const row = await this.transactions.findOne({
+      where: { providerId, externalTransactionId },
+    });
+    if (!row) {
+      return null;
+    }
+    return WagerTransactionMapper.toDomain(row);
+  }
+
+  async findProcessedReversalByProviderAndExternalReference(
+    kind: 'REFUND' | 'ROLLBACK',
+    providerId: string,
+    externalReference: string,
+  ): Promise<WagerTransaction | null> {
+    const row = await this.transactions.findOne({
+      where: {
+        kind,
+        providerId,
+        externalReference,
+        status: 'PROCESSED',
+      },
     });
     if (!row) {
       return null;
@@ -72,7 +114,13 @@ function getUniqueViolationIndexName(error: unknown): string | null {
 
   const named =
     candidate.driverError?.constraint ?? candidate.constraint ?? null;
-  if (named === IDEMPOTENCY_UNIQUE_INDEX || named === EXTERNAL_ID_UNIQUE_INDEX) {
+  const known = [
+    IDEMPOTENCY_UNIQUE_INDEX,
+    EXTERNAL_ID_UNIQUE_INDEX,
+    REFUND_PROCESSED_REF_INDEX,
+    ROLLBACK_PROCESSED_REF_INDEX,
+  ];
+  if (named && known.includes(named)) {
     return named;
   }
 
@@ -84,11 +132,10 @@ function getUniqueViolationIndexName(error: unknown): string | null {
     .filter(Boolean)
     .join(' ');
 
-  if (haystack.includes(IDEMPOTENCY_UNIQUE_INDEX)) {
-    return IDEMPOTENCY_UNIQUE_INDEX;
-  }
-  if (haystack.includes(EXTERNAL_ID_UNIQUE_INDEX)) {
-    return EXTERNAL_ID_UNIQUE_INDEX;
+  for (const index of known) {
+    if (haystack.includes(index)) {
+      return index;
+    }
   }
 
   return null;

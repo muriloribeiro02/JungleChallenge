@@ -102,6 +102,7 @@ describe('wallet migrations (e2e ida e volta)', () => {
       'CreateOutboxMessageTable1761690003000',
       'AddFailureCodeToWagerTransaction1761690004000',
       'AddResultSnapshotToWagerTransaction1761690005000',
+      'RefundRollbackPendingAndUniqueReversal1761690006000',
     ]);
     expect(await tableExists('wallet')).toBe(true);
     expect(await tableExists('wager_transaction')).toBe(true);

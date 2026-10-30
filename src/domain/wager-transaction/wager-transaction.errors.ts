@@ -15,3 +15,12 @@ export class ExternalTransactionIdConflictError extends DomainError {
     super('Violação de unicidade em provider_id+external_transaction_id');
   }
 }
+
+/** Violação UNIQUE: já existe REFUND/ROLLBACK PROCESSED para a mesma referência. */
+export class ReferenceAlreadyReversedConflictError extends DomainError {
+  constructor() {
+    super(
+      'Violação de unicidade: referência já revertida por REFUND ou ROLLBACK processado',
+    );
+  }
+}

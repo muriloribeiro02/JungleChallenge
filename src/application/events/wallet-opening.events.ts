@@ -23,7 +23,9 @@ export function buildWagerTransactionProcessedEvent(input: {
     kind !== 'OPENING' &&
     kind !== 'BET' &&
     kind !== 'WIN' &&
-    kind !== 'LOSS'
+    kind !== 'LOSS' &&
+    kind !== 'REFUND' &&
+    kind !== 'ROLLBACK'
   ) {
     throw new Error(`kind não suportado em Processed: ${kind}`);
   }

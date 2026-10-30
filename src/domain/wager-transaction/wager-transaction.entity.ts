@@ -1,33 +1,51 @@
 import { Money, type MoneyProps } from '../money/money';
 import type { OperationResultSnapshot } from './operation-result-snapshot';
+import {
+  FAILURE_CODE_INSUFFICIENT_FUNDS,
+  type WagerFailureCode,
+} from './failure-codes';
 import { InvalidWagerTransactionError } from './wager-transaction.errors';
 
 export type { OperationResultSnapshot } from './operation-result-snapshot';
+export type { WagerFailureCode } from './failure-codes';
+export {
+  FAILURE_CODE_INSUFFICIENT_FUNDS,
+  FAILURE_CODE_INVALID_REFERENCE_TYPE,
+  FAILURE_CODE_REFERENCE_ALREADY_REVERSED,
+  FAILURE_CODE_REFERENCE_AMOUNT_MISMATCH,
+  FAILURE_CODE_REFERENCE_NOT_FOUND,
+  FAILURE_CODE_REFERENCE_NOT_PROCESSED,
+  FAILURE_CODE_REFERENCE_SCOPE_MISMATCH,
+  FAILURE_CODE_REVERSAL_WOULD_CAUSE_NEGATIVE_BALANCE,
+} from './failure-codes';
 
 export const WAGER_TRANSACTION_TYPE_OPENING = 'OPENING' as const;
 export const WAGER_TRANSACTION_TYPE_BET = 'BET' as const;
 export const WAGER_TRANSACTION_TYPE_WIN = 'WIN' as const;
 export const WAGER_TRANSACTION_TYPE_LOSS = 'LOSS' as const;
+export const WAGER_TRANSACTION_TYPE_REFUND = 'REFUND' as const;
+export const WAGER_TRANSACTION_TYPE_ROLLBACK = 'ROLLBACK' as const;
 
+export const WAGER_TRANSACTION_STATUS_PENDING_REFERENCE =
+  'PENDING_REFERENCE' as const;
 export const WAGER_TRANSACTION_STATUS_PROCESSED = 'PROCESSED' as const;
 export const WAGER_TRANSACTION_STATUS_REJECTED = 'REJECTED' as const;
-
-export const FAILURE_CODE_INSUFFICIENT_FUNDS = 'INSUFFICIENT_FUNDS' as const;
 
 export type WagerTransactionKind =
   | typeof WAGER_TRANSACTION_TYPE_OPENING
   | typeof WAGER_TRANSACTION_TYPE_BET
   | typeof WAGER_TRANSACTION_TYPE_WIN
-  | typeof WAGER_TRANSACTION_TYPE_LOSS;
+  | typeof WAGER_TRANSACTION_TYPE_LOSS
+  | typeof WAGER_TRANSACTION_TYPE_REFUND
+  | typeof WAGER_TRANSACTION_TYPE_ROLLBACK;
 
-/** @deprecated use WagerTransactionKind — mantido para compatibilidade OPENING */
+/** @deprecated use WagerTransactionKind */
 export type WagerTransactionType = WagerTransactionKind;
 
 export type WagerTransactionStatus =
+  | typeof WAGER_TRANSACTION_STATUS_PENDING_REFERENCE
   | typeof WAGER_TRANSACTION_STATUS_PROCESSED
   | typeof WAGER_TRANSACTION_STATUS_REJECTED;
-
-export type WagerFailureCode = typeof FAILURE_CODE_INSUFFICIENT_FUNDS;
 
 export type OpeningProcessedProps = {
   id: string;
@@ -36,7 +54,6 @@ export type OpeningProcessedProps = {
   snapshot: OperationResultSnapshot;
 };
 
-/** Props comuns de operação externa (BET / WIN / LOSS). */
 export type ExternalBetProps = {
   id: string;
   walletId: string;
@@ -53,6 +70,21 @@ export type ExternalBetProps = {
 
 export type ExternalWagerProps = ExternalBetProps;
 
+export type ReversalPendingProps = Omit<ExternalBetProps, 'snapshot'> & {
+  externalReference: string;
+};
+
+export type ReversalProcessedProps = ExternalBetProps & {
+  externalReference: string;
+  resolvedInternalReference: string;
+};
+
+export type ReversalRejectedProps = ExternalBetProps & {
+  externalReference: string;
+  resolvedInternalReference: string | null;
+  failureCode: WagerFailureCode;
+};
+
 export type WagerTransactionState = {
   id: string;
   walletId: string;
@@ -67,7 +99,8 @@ export type WagerTransactionState = {
   roundId: string | null;
   gameId: string | null;
   failureCode: WagerFailureCode | null;
-  /** Legado: ambos null/ausentes. Snapshot completo: ambos preenchidos. */
+  externalReference?: string | null;
+  resolvedInternalReference?: string | null;
   observedBalance?: MoneyProps | null;
   observedWalletVersion?: number | null;
   createdAt?: Date | string;
@@ -76,16 +109,16 @@ export type WagerTransactionState = {
 
 /**
  * Transação de apostas/wallet.
- * OPENING interno ou BET externa (PROCESSED / REJECTED).
- * Estados terminais: sem novas transições após criação.
+ * PENDING_REFERENCE não é terminal e não carrega snapshot.
+ * PROCESSED / REJECTED são terminais.
  */
 export class WagerTransaction {
   private constructor(
     public readonly id: string,
     public readonly walletId: string,
     public readonly playerId: string | null,
-    public readonly type: WagerTransactionKind,
-    public readonly status: WagerTransactionStatus,
+    private _type: WagerTransactionKind,
+    private _status: WagerTransactionStatus,
     public readonly amount: Money,
     public readonly providerId: string | null,
     public readonly externalTransactionId: string | null,
@@ -93,15 +126,38 @@ export class WagerTransaction {
     public readonly payloadHash: string | null,
     public readonly roundId: string | null,
     public readonly gameId: string | null,
-    public readonly failureCode: WagerFailureCode | null,
-    private readonly _observedBalance: Money | null,
-    private readonly _observedWalletVersion: number | null,
+    private _failureCode: WagerFailureCode | null,
+    public readonly externalReference: string | null,
+    private _resolvedInternalReference: string | null,
+    private _observedBalance: Money | null,
+    private _observedWalletVersion: number | null,
     public readonly createdAt: Date,
-    public readonly updatedAt: Date,
+    private _updatedAt: Date,
   ) {}
 
+  get type(): WagerTransactionKind {
+    return this._type;
+  }
+
   get kind(): WagerTransactionKind {
-    return this.type;
+    return this._type;
+  }
+
+  get status(): WagerTransactionStatus {
+    return this._status;
+  }
+
+  get failureCode(): WagerFailureCode | null {
+    return this._failureCode;
+  }
+
+  get resolvedInternalReference(): string | null {
+    return this._resolvedInternalReference;
+  }
+
+  /** Alias de domínio para o id interno resolvido da referência. */
+  get referenceTransactionId(): string | null {
+    return this._resolvedInternalReference;
   }
 
   get observedBalance(): Money | null {
@@ -112,11 +168,62 @@ export class WagerTransaction {
     return this._observedWalletVersion;
   }
 
+  get updatedAt(): Date {
+    return this._updatedAt;
+  }
+
   get isTerminal(): boolean {
     return (
-      this.status === WAGER_TRANSACTION_STATUS_PROCESSED ||
-      this.status === WAGER_TRANSACTION_STATUS_REJECTED
+      this._status === WAGER_TRANSACTION_STATUS_PROCESSED ||
+      this._status === WAGER_TRANSACTION_STATUS_REJECTED
     );
+  }
+
+  /**
+   * Direção do ledger para ROLLBACK a partir do kind da referência.
+   * REFUND de BET é sempre CREDIT (não usa este método).
+   */
+  static ledgerDirectionForRollback(
+    referenceKind: WagerTransactionKind,
+  ): 'CREDIT' | 'DEBIT' {
+    if (referenceKind === WAGER_TRANSACTION_TYPE_BET) {
+      return 'CREDIT';
+    }
+    if (
+      referenceKind === WAGER_TRANSACTION_TYPE_WIN ||
+      referenceKind === WAGER_TRANSACTION_TYPE_REFUND
+    ) {
+      return 'DEBIT';
+    }
+    throw new InvalidWagerTransactionError(
+      `kind de referência não suportado para ROLLBACK: ${referenceKind}`,
+    );
+  }
+
+  /**
+   * Transição PENDING_REFERENCE → PROCESSED (worker futuro).
+   */
+  markProcessed(
+    resolvedInternalReference: string,
+    snapshot: OperationResultSnapshot,
+    at: Date = new Date(),
+  ): void {
+    if (this._status !== WAGER_TRANSACTION_STATUS_PENDING_REFERENCE) {
+      throw new InvalidWagerTransactionError(
+        'somente PENDING_REFERENCE pode ser marcada como PROCESSED',
+      );
+    }
+    WagerTransaction.assertRequiredId(
+      resolvedInternalReference,
+      'resolvedInternalReference',
+    );
+    const snap = WagerTransaction.assertSnapshot(snapshot, this.amount);
+    this._resolvedInternalReference = resolvedInternalReference;
+    this._status = WAGER_TRANSACTION_STATUS_PROCESSED;
+    this._failureCode = null;
+    this._observedBalance = snap.observedBalance;
+    this._observedWalletVersion = snap.observedWalletVersion;
+    this._updatedAt = at;
   }
 
   static openingProcessed(props: OpeningProcessedProps): WagerTransaction {
@@ -127,7 +234,6 @@ export class WagerTransaction {
       props.snapshot,
       props.amount,
     );
-
     const now = new Date();
     return new WagerTransaction(
       props.id,
@@ -143,35 +249,7 @@ export class WagerTransaction {
       null,
       null,
       null,
-      snapshot.observedBalance,
-      snapshot.observedWalletVersion,
-      now,
-      now,
-    );
-  }
-
-  static betProcessed(props: ExternalBetProps): WagerTransaction {
-    WagerTransaction.assertExternalBetProps(props);
-    WagerTransaction.assertPositiveMoney(props.amount, 'BET');
-    const snapshot = WagerTransaction.assertSnapshot(
-      props.snapshot,
-      props.amount,
-    );
-
-    const now = new Date();
-    return new WagerTransaction(
-      props.id,
-      props.walletId,
-      props.playerId,
-      WAGER_TRANSACTION_TYPE_BET,
-      WAGER_TRANSACTION_STATUS_PROCESSED,
-      props.amount,
-      props.providerId,
-      props.externalTransactionId,
-      props.idempotencyKey,
-      props.payloadHash,
-      props.roundId,
-      props.gameId,
+      null,
       null,
       snapshot.observedBalance,
       snapshot.observedWalletVersion,
@@ -180,16 +258,23 @@ export class WagerTransaction {
     );
   }
 
+  static betProcessed(props: ExternalBetProps): WagerTransaction {
+    return WagerTransaction.createExternalProcessed(
+      props,
+      WAGER_TRANSACTION_TYPE_BET,
+      () => WagerTransaction.assertPositiveMoney(props.amount, 'BET'),
+    );
+  }
+
   static betRejectedInsufficientFunds(
     props: ExternalBetProps,
   ): WagerTransaction {
-    WagerTransaction.assertExternalBetProps(props);
+    WagerTransaction.assertExternalMeta(props);
     WagerTransaction.assertPositiveMoney(props.amount, 'BET');
     const snapshot = WagerTransaction.assertSnapshot(
       props.snapshot,
       props.amount,
     );
-
     const now = new Date();
     return new WagerTransaction(
       props.id,
@@ -205,6 +290,8 @@ export class WagerTransaction {
       props.roundId,
       props.gameId,
       FAILURE_CODE_INSUFFICIENT_FUNDS,
+      null,
+      null,
       snapshot.observedBalance,
       snapshot.observedWalletVersion,
       now,
@@ -213,19 +300,75 @@ export class WagerTransaction {
   }
 
   static winProcessed(props: ExternalWagerProps): WagerTransaction {
-    WagerTransaction.assertExternalBetProps(props);
-    WagerTransaction.assertPositiveMoney(props.amount, 'WIN');
-    const snapshot = WagerTransaction.assertSnapshot(
-      props.snapshot,
-      props.amount,
+    return WagerTransaction.createExternalProcessed(
+      props,
+      WAGER_TRANSACTION_TYPE_WIN,
+      () => WagerTransaction.assertPositiveMoney(props.amount, 'WIN'),
     );
+  }
 
+  static lossProcessed(props: ExternalWagerProps): WagerTransaction {
+    return WagerTransaction.createExternalProcessed(
+      props,
+      WAGER_TRANSACTION_TYPE_LOSS,
+      () => WagerTransaction.assertZeroMoney(props.amount, 'LOSS'),
+    );
+  }
+
+  static refundPendingReference(
+    props: ReversalPendingProps,
+  ): WagerTransaction {
+    WagerTransaction.assertExternalMeta(props);
+    WagerTransaction.assertPositiveMoney(props.amount, 'REFUND');
+    WagerTransaction.assertRequiredId(
+      props.externalReference,
+      'externalReference',
+    );
     const now = new Date();
     return new WagerTransaction(
       props.id,
       props.walletId,
       props.playerId,
-      WAGER_TRANSACTION_TYPE_WIN,
+      WAGER_TRANSACTION_TYPE_REFUND,
+      WAGER_TRANSACTION_STATUS_PENDING_REFERENCE,
+      props.amount,
+      props.providerId,
+      props.externalTransactionId,
+      props.idempotencyKey,
+      props.payloadHash,
+      props.roundId,
+      props.gameId,
+      null,
+      props.externalReference,
+      null,
+      null,
+      null,
+      now,
+      now,
+    );
+  }
+
+  static refundProcessed(props: ReversalProcessedProps): WagerTransaction {
+    WagerTransaction.assertExternalMeta(props);
+    WagerTransaction.assertPositiveMoney(props.amount, 'REFUND');
+    WagerTransaction.assertRequiredId(
+      props.externalReference,
+      'externalReference',
+    );
+    WagerTransaction.assertRequiredId(
+      props.resolvedInternalReference,
+      'resolvedInternalReference',
+    );
+    const snapshot = WagerTransaction.assertSnapshot(
+      props.snapshot,
+      props.amount,
+    );
+    const now = new Date();
+    return new WagerTransaction(
+      props.id,
+      props.walletId,
+      props.playerId,
+      WAGER_TRANSACTION_TYPE_REFUND,
       WAGER_TRANSACTION_STATUS_PROCESSED,
       props.amount,
       props.providerId,
@@ -235,6 +378,8 @@ export class WagerTransaction {
       props.roundId,
       props.gameId,
       null,
+      props.externalReference,
+      props.resolvedInternalReference,
       snapshot.observedBalance,
       snapshot.observedWalletVersion,
       now,
@@ -242,20 +387,67 @@ export class WagerTransaction {
     );
   }
 
-  static lossProcessed(props: ExternalWagerProps): WagerTransaction {
-    WagerTransaction.assertExternalBetProps(props);
-    WagerTransaction.assertZeroMoney(props.amount, 'LOSS');
-    const snapshot = WagerTransaction.assertSnapshot(
-      props.snapshot,
-      props.amount,
+  static refundRejected(props: ReversalRejectedProps): WagerTransaction {
+    return WagerTransaction.createReversalRejected(
+      props,
+      WAGER_TRANSACTION_TYPE_REFUND,
     );
+  }
 
+  static rollbackPendingReference(
+    props: ReversalPendingProps,
+  ): WagerTransaction {
+    WagerTransaction.assertExternalMeta(props);
+    WagerTransaction.assertPositiveMoney(props.amount, 'ROLLBACK');
+    WagerTransaction.assertRequiredId(
+      props.externalReference,
+      'externalReference',
+    );
     const now = new Date();
     return new WagerTransaction(
       props.id,
       props.walletId,
       props.playerId,
-      WAGER_TRANSACTION_TYPE_LOSS,
+      WAGER_TRANSACTION_TYPE_ROLLBACK,
+      WAGER_TRANSACTION_STATUS_PENDING_REFERENCE,
+      props.amount,
+      props.providerId,
+      props.externalTransactionId,
+      props.idempotencyKey,
+      props.payloadHash,
+      props.roundId,
+      props.gameId,
+      null,
+      props.externalReference,
+      null,
+      null,
+      null,
+      now,
+      now,
+    );
+  }
+
+  static rollbackProcessed(props: ReversalProcessedProps): WagerTransaction {
+    WagerTransaction.assertExternalMeta(props);
+    WagerTransaction.assertPositiveMoney(props.amount, 'ROLLBACK');
+    WagerTransaction.assertRequiredId(
+      props.externalReference,
+      'externalReference',
+    );
+    WagerTransaction.assertRequiredId(
+      props.resolvedInternalReference,
+      'resolvedInternalReference',
+    );
+    const snapshot = WagerTransaction.assertSnapshot(
+      props.snapshot,
+      props.amount,
+    );
+    const now = new Date();
+    return new WagerTransaction(
+      props.id,
+      props.walletId,
+      props.playerId,
+      WAGER_TRANSACTION_TYPE_ROLLBACK,
       WAGER_TRANSACTION_STATUS_PROCESSED,
       props.amount,
       props.providerId,
@@ -265,10 +457,19 @@ export class WagerTransaction {
       props.roundId,
       props.gameId,
       null,
+      props.externalReference,
+      props.resolvedInternalReference,
       snapshot.observedBalance,
       snapshot.observedWalletVersion,
       now,
       now,
+    );
+  }
+
+  static rollbackRejected(props: ReversalRejectedProps): WagerTransaction {
+    return WagerTransaction.createReversalRejected(
+      props,
+      WAGER_TRANSACTION_TYPE_ROLLBACK,
     );
   }
 
@@ -290,10 +491,91 @@ export class WagerTransaction {
       state.roundId,
       state.gameId,
       state.failureCode,
+      state.externalReference ?? null,
+      state.resolvedInternalReference ?? null,
       snapshot.observedBalance,
       snapshot.observedWalletVersion,
       WagerTransaction.toDate(state.createdAt ?? new Date()),
       WagerTransaction.toDate(state.updatedAt ?? new Date()),
+    );
+  }
+
+  private static createExternalProcessed(
+    props: ExternalBetProps,
+    kind: WagerTransactionKind,
+    assertAmount: () => void,
+  ): WagerTransaction {
+    WagerTransaction.assertExternalMeta(props);
+    assertAmount();
+    const snapshot = WagerTransaction.assertSnapshot(
+      props.snapshot,
+      props.amount,
+    );
+    const now = new Date();
+    return new WagerTransaction(
+      props.id,
+      props.walletId,
+      props.playerId,
+      kind,
+      WAGER_TRANSACTION_STATUS_PROCESSED,
+      props.amount,
+      props.providerId,
+      props.externalTransactionId,
+      props.idempotencyKey,
+      props.payloadHash,
+      props.roundId,
+      props.gameId,
+      null,
+      null,
+      null,
+      snapshot.observedBalance,
+      snapshot.observedWalletVersion,
+      now,
+      now,
+    );
+  }
+
+  private static createReversalRejected(
+    props: ReversalRejectedProps,
+    kind: typeof WAGER_TRANSACTION_TYPE_REFUND | typeof WAGER_TRANSACTION_TYPE_ROLLBACK,
+  ): WagerTransaction {
+    WagerTransaction.assertExternalMeta(props);
+    WagerTransaction.assertPositiveMoney(
+      props.amount,
+      kind === WAGER_TRANSACTION_TYPE_REFUND ? 'REFUND' : 'ROLLBACK',
+    );
+    WagerTransaction.assertRequiredId(
+      props.externalReference,
+      'externalReference',
+    );
+    if (!props.failureCode) {
+      throw new InvalidWagerTransactionError('failureCode é obrigatório');
+    }
+    const snapshot = WagerTransaction.assertSnapshot(
+      props.snapshot,
+      props.amount,
+    );
+    const now = new Date();
+    return new WagerTransaction(
+      props.id,
+      props.walletId,
+      props.playerId,
+      kind,
+      WAGER_TRANSACTION_STATUS_REJECTED,
+      props.amount,
+      props.providerId,
+      props.externalTransactionId,
+      props.idempotencyKey,
+      props.payloadHash,
+      props.roundId,
+      props.gameId,
+      props.failureCode,
+      props.externalReference,
+      props.resolvedInternalReference,
+      snapshot.observedBalance,
+      snapshot.observedWalletVersion,
+      now,
+      now,
     );
   }
 
@@ -370,7 +652,9 @@ export class WagerTransaction {
     return snapshot;
   }
 
-  private static assertExternalBetProps(props: ExternalBetProps): void {
+  private static assertExternalMeta(
+    props: Omit<ExternalBetProps, 'snapshot'> | ExternalBetProps,
+  ): void {
     WagerTransaction.assertRequiredId(props.id, 'id');
     WagerTransaction.assertRequiredId(props.walletId, 'walletId');
     WagerTransaction.assertRequiredId(props.playerId, 'playerId');
