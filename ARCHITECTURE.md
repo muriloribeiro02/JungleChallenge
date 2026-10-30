@@ -3,10 +3,10 @@
 ## Camadas
 
 - **domain** — entidades, VOs (`Money`), portas de repositório, eventos
-- **application** — use cases, ports (`UnitOfWork`, `MessageBus`), workers de mensageria
-- **infrastructure** — TypeORM, SQS, logging, env
+- **application** — use cases, ports (`UnitOfWork`, `MessageBus`, `MetricsPort`), workers de mensageria
+- **infrastructure** — TypeORM, SQS, logging, env, adapter Prometheus (`prom-client`)
 - **composition** — wiring único (`createAppComposition`)
-- **api** — controllers Nest, DTOs HTTP, filtros, `NoopAuthGuard`
+- **api** — controllers Nest, DTOs HTTP, filtros, `NoopAuthGuard`, `GET /metrics`
 
 ## ORM
 
@@ -25,6 +25,7 @@
 | GET | `/providers/:providerId/wagering/transactions/:externalTransactionId` | 200 / 404 |
 | GET | `/health/live` | 200 |
 | GET | `/health/ready` | 200 / 503 |
+| GET | `/metrics` | 200 (Prometheus text) |
 
 ### Status codes (decisão)
 
@@ -111,6 +112,14 @@ outbox) → ACK após commit.
   Se VT=0 falhar, permanece o visibility timeout original.
 - Probe de teste: `SHUTDOWN_TEST_HOLD_MS` (0 em prod) — hold após receive/claim.
 
+### Observabilidade Prometheus (Fase D)
+
+- Porta `MetricsPort` + `safeMetrics` (falha de métrica não afeta TX financeira).
+- Adapter `createPrometheusMetrics` (Bun 1.4.4 + `prom-client` 15.x).
+- Counters/histograms por processo; gauges de outbox (PG) e DLQ (SQS) com cache ~10s.
+- Compose: serviço `prometheus` scrapa `app-1`/`app-2`/`app-3` (`docker/prometheus/prometheus.yml`).
+- Catálogo: [`docs/METRICS.md`](docs/METRICS.md). Sem Grafana nesta fase.
+
 ## Reversões REFUND / ROLLBACK (decisão §7)
 
 Contrato §7.4: uma referência não pode ser revertida duas vezes pelo **mesmo tipo**.
@@ -125,5 +134,6 @@ REFUND, não o da BET. Índice: `UQ_wager_transaction_processed_reversal_ref` (m
 
 ## Limitações conhecidas
 
-- Métricas Prometheus/OpenTelemetry não implementadas (logs estruturados sim).
-- Filas SQS do contrato citam `.fifo`; o ambiente local usa filas standard (LocalStack) — documentado na etapa de mensageria.
+- OpenTelemetry tracing ainda não implementado (métricas Prometheus sim — Fase D).
+- Counters zeram no restart do processo; DLQ depth é aproximada (SQS); ver `docs/METRICS.md`.
+- Fila de **eventos** local permanece standard; inbound de apostas é FIFO.

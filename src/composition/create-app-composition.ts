@@ -4,6 +4,10 @@ import { InboundWagerConsumer } from '../application/messaging/inbound-wager-con
 import { InboxConsumer } from '../application/messaging/inbox-consumer';
 import { OutboxPublisher } from '../application/messaging/outbox-publisher';
 import type { MessageBus } from '../application/ports/message-bus';
+import type {
+  MetricsExposition,
+  MetricsPort,
+} from '../application/ports/metrics';
 import type { MessagingLogger } from '../application/ports/messaging-logger';
 import type { UnitOfWork } from '../application/ports/unit-of-work';
 import { GetWalletUseCase } from '../application/use-cases/wallet/get-wallet.use-case';
@@ -21,6 +25,7 @@ import { SettleLossUseCase } from '../application/use-cases/wager/settle-loss.us
 import { SettleWinUseCase } from '../application/use-cases/wager/settle-win.use-case';
 import { SubmitWagerTransactionUseCase } from '../application/use-cases/wager/submit-wager-transaction.use-case';
 import { ConsoleMessagingLogger } from '../infrastructure/logging/console-messaging-logger';
+import { createPrometheusMetrics } from '../infrastructure/metrics/prometheus-metrics';
 import { SqsMessageBus } from '../infrastructure/messaging/sqs-message-bus';
 import { sqsEnv } from '../infrastructure/messaging/sqs.env';
 import { TypeOrmUnitOfWork } from '../infrastructure/unit-of-work/typeorm-unit-of-work';
@@ -32,6 +37,8 @@ export type AppComposition = {
   unitOfWork: UnitOfWork;
   messageBus: MessageBus;
   logger: MessagingLogger;
+  metrics: MetricsPort;
+  metricsExposition: MetricsExposition;
   openWallet: OpenWalletUseCase;
   getWallet: GetWalletUseCase;
   getWalletBalance: GetWalletBalanceUseCase;
@@ -62,6 +69,9 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
   const messageBus = SqsMessageBus.fromEnv(sqsEnv.mainQueueUrl);
   const inboundMessageBus = SqsMessageBus.fromEnv(sqsEnv.inboundQueueUrl);
   const logger = new ConsoleMessagingLogger();
+  const prom = createPrometheusMetrics({ dataSource });
+  const metrics: MetricsPort = prom;
+  const metricsExposition: MetricsExposition = prom;
   const walletRepo = new TypeOrmWalletRepository(
     dataSource.getRepository(WalletOrmEntity),
   );
@@ -70,7 +80,11 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
   const getWallet = new GetWalletUseCase(walletRepo);
   const getWalletBalance = new GetWalletBalanceUseCase(walletRepo);
   const listWalletLedger = new ListWalletLedgerUseCase(unitOfWork);
-  const reconcileWallet = new ReconcileWalletUseCase(unitOfWork, logger);
+  const reconcileWallet = new ReconcileWalletUseCase(
+    unitOfWork,
+    logger,
+    metrics,
+  );
   const placeBet = new PlaceBetUseCase(unitOfWork);
   const settleWin = new SettleWinUseCase(unitOfWork);
   const settleLoss = new SettleLossUseCase(unitOfWork);
@@ -85,6 +99,7 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
       batchSize: Number(process.env.PENDING_REFERENCE_BATCH_SIZE ?? 10),
       leaseSeconds: Number(process.env.PENDING_REFERENCE_LEASE_SECONDS ?? 30),
     },
+    metrics,
   );
   const submitWagerTransaction = new SubmitWagerTransactionUseCase(
     unitOfWork,
@@ -93,14 +108,21 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
     settleLoss,
     refundWager,
     rollbackWager,
+    metrics,
   );
   const getWagerTransaction = new GetWagerTransactionUseCase(unitOfWork);
   const domainEventHandler = new DomainEventHandler(reprocessPending);
 
-  const outboxPublisher = new OutboxPublisher(unitOfWork, messageBus, logger, {
-    batchSize: sqsEnv.publisherBatchSize,
-    leaseSeconds: sqsEnv.claimLeaseSeconds,
-  });
+  const outboxPublisher = new OutboxPublisher(
+    unitOfWork,
+    messageBus,
+    logger,
+    {
+      batchSize: sqsEnv.publisherBatchSize,
+      leaseSeconds: sqsEnv.claimLeaseSeconds,
+    },
+    metrics,
+  );
 
   const inboxConsumer = new InboxConsumer(
     messageBus,
@@ -111,6 +133,7 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
       maxMessages: sqsEnv.receiveMaxMessages,
       waitSeconds: sqsEnv.receiveWaitSeconds,
     },
+    metrics,
   );
 
   const inboundWagerConsumer = new InboundWagerConsumer(
@@ -122,6 +145,7 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
       maxMessages: sqsEnv.receiveMaxMessages,
       waitSeconds: sqsEnv.receiveWaitSeconds,
     },
+    metrics,
   );
 
   return {
@@ -130,6 +154,8 @@ export function createAppComposition(dataSource: DataSource): AppComposition {
     messageBus,
     inboundMessageBus,
     logger,
+    metrics,
+    metricsExposition,
     openWallet,
     getWallet,
     getWalletBalance,

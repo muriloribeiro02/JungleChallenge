@@ -4,10 +4,16 @@ import {
 } from '../../domain/inbox/inbox-message.entity';
 import { Money } from '../../domain/money/money';
 import type { MessageBus, ReceivedBusMessage } from '../ports/message-bus';
+import {
+  elapsedSecondsSince,
+  noopMetrics,
+  type MetricsPort,
+} from '../ports/metrics';
 import type { MessagingLogger } from '../ports/messaging-logger';
 import type { UnitOfWork } from '../ports/unit-of-work';
 import type {
   SubmitWagerTransactionInput,
+  SubmitWagerTransactionOutput,
   SubmitWagerTransactionUseCase,
 } from '../use-cases/wager/submit-wager-transaction.use-case';
 import {
@@ -16,6 +22,8 @@ import {
 } from './active-sqs-receipts';
 import { shutdownGate } from './shutdown-gate';
 import { applyShutdownTestHoldIfConfigured } from './shutdown-test-hold';
+
+const CONSUMER = 'wager_inbound' as const;
 
 export type InboundWagerConsumerOptions = {
   maxMessages: number;
@@ -51,6 +59,7 @@ export class InboundWagerConsumer {
     private readonly submit: SubmitWagerTransactionUseCase,
     private readonly logger: MessagingLogger,
     private readonly options: InboundWagerConsumerOptions,
+    private readonly metrics: MetricsPort = noopMetrics,
   ) {}
 
   async pollOnce(): Promise<{
@@ -59,15 +68,22 @@ export class InboundWagerConsumer {
     duplicates: number;
     failed: number;
   }> {
+    const started = process.hrtime.bigint();
     const messages = await this.bus.receive(
       this.options.maxMessages,
       this.options.waitSeconds,
     );
+    this.metrics.recordMessagingReceived(CONSUMER, messages.length);
     let processed = 0;
     let duplicates = 0;
     let failed = 0;
+    let inFlight = 0;
 
     for (const message of messages) {
+      if (message.receiveCount > 1) {
+        this.metrics.recordMessagingRetry(CONSUMER);
+      }
+
       if (shutdownGate.stopping || shutdownGate.abandonInFlight) {
         await this.releaseWithoutAck(message, 'shutdown_before_start');
         failed += 1;
@@ -83,6 +99,8 @@ export class InboundWagerConsumer {
       );
 
       try {
+        inFlight += 1;
+        this.metrics.setMessagingInFlight(CONSUMER, inFlight);
         await applyShutdownTestHoldIfConfigured();
 
         if (shutdownGate.abandonInFlight) {
@@ -118,8 +136,25 @@ export class InboundWagerConsumer {
           error: error instanceof Error ? error.message : String(error),
           willRetryOrDlq: true,
         });
+      } finally {
+        inFlight = Math.max(0, inFlight - 1);
+        this.metrics.setMessagingInFlight(CONSUMER, inFlight);
       }
     }
+
+    if (processed > 0) {
+      this.metrics.recordMessagingProcessed(CONSUMER, processed);
+    }
+    if (duplicates > 0) {
+      this.metrics.recordMessagingDuplicate(CONSUMER, duplicates);
+    }
+    if (failed > 0) {
+      this.metrics.recordMessagingFailed(CONSUMER, failed);
+    }
+    this.metrics.observeMessagingDuration(
+      CONSUMER,
+      elapsedSecondsSince(started),
+    );
 
     return {
       received: messages.length,
@@ -134,6 +169,7 @@ export class InboundWagerConsumer {
   ): Promise<'processed' | 'duplicate'> {
     const envelope = parseRequestedEnvelope(message.body);
     const messageId = envelope.messageId;
+    const started = process.hrtime.bigint();
 
     this.logger.info('inbound.message_received', {
       messageId,
@@ -147,6 +183,7 @@ export class InboundWagerConsumer {
     assertMoneyProps(envelope.data.money);
 
     const input = toSubmitInput(envelope);
+    let submitOutput: SubmitWagerTransactionOutput | null = null;
 
     const inserted = await this.unitOfWork.run(async (repos) => {
       const first = await repos.inboxMessages.tryInsert(
@@ -161,7 +198,7 @@ export class InboundWagerConsumer {
         return false;
       }
 
-      await this.submit.executeWithRepos(repos, input);
+      submitOutput = await this.submit.executeWithRepos(repos, input);
       return true;
     });
 
@@ -171,6 +208,14 @@ export class InboundWagerConsumer {
         transportMessageId: message.transportMessageId,
       });
       return 'duplicate';
+    }
+
+    if (submitOutput) {
+      try {
+        this.submit.recordMetrics(input.kind, submitOutput, started);
+      } catch {
+        // instrumentação nunca falha o ACK / efeito já commitado
+      }
     }
 
     this.logger.info('inbound.message_processed', {

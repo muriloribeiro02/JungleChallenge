@@ -31,6 +31,17 @@ bun run apps:down        # pare antes de test:messaging (mesma fila SQS)
 
 `GET /health/live` devolve `instanceId` (`app-1`…`app-3`), `pid` e `workersEnabled`.
 
+### Observabilidade (Fase D — Prometheus)
+
+```bash
+docker compose up -d prometheus   # após apps:up
+```
+
+- UI: http://localhost:9090 (targets: job `dwp-apps` → app-1/2/3)
+- Por instância: `GET http://localhost:3001/metrics` (3002, 3003)
+- Catálogo, PromQL e limitações: [`docs/METRICS.md`](docs/METRICS.md)
+- Sem Grafana nesta fase
+
 ## Endpoints HTTP
 
 | Método | Path | Notas |
@@ -44,6 +55,7 @@ bun run apps:down        # pare antes de test:messaging (mesma fila SQS)
 | `GET` | `/providers/:providerId/wagering/transactions/:externalTransactionId` | |
 | `GET` | `/health/live` | sem auth |
 | `GET` | `/health/ready` | Postgres + SQS |
+| `GET` | `/metrics` | Prometheus text; sem auth local; sem saldos/IDs |
 
 Exemplo BET:
 

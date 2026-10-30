@@ -18,6 +18,9 @@ Sempre documentar quando houver uma atualização em teste neste arquivo.
 | `test:multi-instance` | `bun run test:multi-instance` | 3 containers `app-1..3` (HTTP + workers reais) |
 | `apps:up` / `apps:down` | `bun run apps:up` | Sobe/para app-1..3 |
 | (filtro) | `bun run test:e2e -- http.api` | E2E HTTP Nest + Postgres (supertest) |
+| (filtro) | `bun run test:unit -- metrics` | Unit métricas / instrumentação |
+| (filtro) | `bun run test:e2e -- metrics` | E2E `GET /metrics` + submit |
+| (filtro) | `bun run test:multi-instance -- prometheus` | Scrape real Prometheus ↔ app-1..3 |
 | `test:watch` | `bun run test:watch` | Jest em modo watch (specs em `src/`) |
 | `test:cov` | `bun run test:cov` | Cobertura dos specs em `src/` |
 | `test:debug` | `bun run test:debug` | Jest com inspector Node para debug |
@@ -62,6 +65,10 @@ test/
   helpers/
     db.ts                      # Postgres + insertWallet/tx/ledger/outbox
     migration-data-source.ts   # DataSource TypeORM com migrations 001–010
+  metrics/
+    prometheus-metrics.spec.ts            # unit: counters/histograms/safeMetrics/cache
+    metrics-instrumentation.spec.ts       # unit: Submit/Inbox/Outbox → métricas
+    metrics.e2e-spec.ts                   # e2e: GET /metrics, BET, replay, reconcile
   api/
     http.api.e2e-spec.ts                  # e2e: REST §9 (wallets, wagering, health, idempotência)
   messaging/
@@ -219,11 +226,17 @@ Pré-requisito: postgres + localstack + migrations + `bun run apps:up`.
 | Arquivo | Tipo | Cobre |
 |---------|------|-------|
 | `multi-instance/multi-instance.e2e-spec.ts` | e2e multi-processo | A–E; F/H–G; **F/I**: `drain_timeout` real (`SHUTDOWN_TEST_HOLD_MS`) + lease recovery |
+| `multi-instance/prometheus-scrape.e2e-spec.ts` | e2e multi-processo | Fase D: `/metrics` 3 apps; Prometheus targets UP; PromQL; restart app-1 |
 | `multi-instance/helpers.ts` | helper | wait `/health`, `dockerCompose`, `submitRefund`, cleanup PG |
+| `metrics/prometheus-metrics.spec.ts` | unit | registry, labels, safeMetrics, CachedValue |
+| `metrics/metrics-instrumentation.spec.ts` | unit | Submit/Inbox/Outbox incrementam counters |
+| `metrics/metrics.e2e-spec.ts` | e2e | `/metrics`, BET, replay idempotente, reconcile |
 
 ```bash
 bun run apps:up
+docker compose up -d prometheus
 bun run test:multi-instance
+bun run test:multi-instance -- prometheus
 bun run apps:down   # pare os apps antes de test:messaging / e2e SQS (mesma fila)
 ```
 

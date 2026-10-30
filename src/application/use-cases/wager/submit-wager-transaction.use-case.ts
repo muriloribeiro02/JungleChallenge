@@ -1,7 +1,13 @@
 import {
   ExternalTransactionIdConflictError,
   IdempotencyKeyConflictError,
+  ReferenceAlreadyReversedConflictError,
 } from '../../../domain/wager-transaction/wager-transaction.errors';
+import {
+  elapsedSecondsSince,
+  noopMetrics,
+  type MetricsPort,
+} from '../../ports/metrics';
 import type {
   TransactionalRepositories,
   UnitOfWork,
@@ -49,8 +55,13 @@ export class SubmitWagerTransactionUseCase {
     private readonly settleLoss: SettleLossUseCase,
     private readonly refundWager: RefundWagerUseCase,
     private readonly rollbackWager: RollbackWagerUseCase,
+    private readonly metrics: MetricsPort = noopMetrics,
   ) {}
 
+  /**
+   * Efeito financeiro na TX aberta. Sem métricas aqui — o caller registra
+   * após commit bem-sucedido (`execute` ou Inbound após UoW).
+   */
   async executeWithRepos(
     repos: TransactionalRepositories,
     input: SubmitWagerTransactionInput,
@@ -201,18 +212,42 @@ export class SubmitWagerTransactionUseCase {
     }
   }
 
+  /** Registra métricas após commit — não altera o resultado financeiro. */
+  recordMetrics(
+    kind: SubmitWagerTransactionInput['kind'],
+    output: SubmitWagerTransactionOutput,
+    startedNs: bigint,
+  ): void {
+    this.metrics.recordWagerTransaction({
+      kind,
+      status: output.status,
+      idempotentReplay: output.idempotentReplay,
+      durationSeconds: elapsedSecondsSince(startedNs),
+    });
+  }
+
   async execute(
     input: SubmitWagerTransactionInput,
   ): Promise<SubmitWagerTransactionOutput> {
+    const started = process.hrtime.bigint();
     try {
-      return await this.unitOfWork.run((repos) =>
+      const output = await this.unitOfWork.run((repos) =>
         this.executeWithRepos(repos, input),
       );
+      this.recordMetrics(input.kind, output, started);
+      return output;
     } catch (error) {
       if (error instanceof IdempotencyKeyConflictError) {
-        return this.unitOfWork.run((repos) =>
+        this.metrics.recordLockConflict('idempotency_key');
+        const output = await this.unitOfWork.run((repos) =>
           this.executeWithRepos(repos, input),
         );
+        this.recordMetrics(input.kind, output, started);
+        return output;
+      }
+      if (error instanceof ReferenceAlreadyReversedConflictError) {
+        this.metrics.recordLockConflict('reference_reversed');
+        throw error;
       }
       if (error instanceof ExternalTransactionIdConflictError) {
         throw error;

@@ -4,6 +4,11 @@ import {
 } from '../../domain/inbox/inbox-message.entity';
 import type { DomainEventEnvelope } from '../../domain/events/domain-event';
 import type { MessageBus, ReceivedBusMessage } from '../ports/message-bus';
+import {
+  elapsedSecondsSince,
+  noopMetrics,
+  type MetricsPort,
+} from '../ports/metrics';
 import type { MessagingLogger } from '../ports/messaging-logger';
 import type { UnitOfWork } from '../ports/unit-of-work';
 import {
@@ -13,6 +18,8 @@ import {
 import type { DomainEventHandler } from './domain-event-handler';
 import { shutdownGate } from './shutdown-gate';
 import { applyShutdownTestHoldIfConfigured } from './shutdown-test-hold';
+
+const CONSUMER = 'domain_events' as const;
 
 export type InboxConsumerOptions = {
   maxMessages: number;
@@ -35,6 +42,7 @@ export class InboxConsumer {
     private readonly handler: DomainEventHandler,
     private readonly logger: MessagingLogger,
     private readonly options: InboxConsumerOptions,
+    private readonly metrics: MetricsPort = noopMetrics,
   ) {}
 
   async pollOnce(): Promise<{
@@ -43,15 +51,22 @@ export class InboxConsumer {
     duplicates: number;
     failed: number;
   }> {
+    const started = process.hrtime.bigint();
     const messages = await this.bus.receive(
       this.options.maxMessages,
       this.options.waitSeconds,
     );
+    this.metrics.recordMessagingReceived(CONSUMER, messages.length);
     let processed = 0;
     let duplicates = 0;
     let failed = 0;
+    let inFlight = 0;
 
     for (const message of messages) {
+      if (message.receiveCount > 1) {
+        this.metrics.recordMessagingRetry(CONSUMER);
+      }
+
       if (shutdownGate.stopping || shutdownGate.abandonInFlight) {
         await this.releaseWithoutAck(message, 'shutdown_before_start');
         failed += 1;
@@ -67,6 +82,8 @@ export class InboxConsumer {
       );
 
       try {
+        inFlight += 1;
+        this.metrics.setMessagingInFlight(CONSUMER, inFlight);
         // Probe C3 (só com SHUTDOWN_TEST_HOLD_MS): hold após receive, antes do UoW.
         await applyShutdownTestHoldIfConfigured();
 
@@ -109,8 +126,25 @@ export class InboxConsumer {
           transportMessageId: message.transportMessageId,
           receiveCount: message.receiveCount,
         });
+      } finally {
+        inFlight = Math.max(0, inFlight - 1);
+        this.metrics.setMessagingInFlight(CONSUMER, inFlight);
       }
     }
+
+    if (processed > 0) {
+      this.metrics.recordMessagingProcessed(CONSUMER, processed);
+    }
+    if (duplicates > 0) {
+      this.metrics.recordMessagingDuplicate(CONSUMER, duplicates);
+    }
+    if (failed > 0) {
+      this.metrics.recordMessagingFailed(CONSUMER, failed);
+    }
+    this.metrics.observeMessagingDuration(
+      CONSUMER,
+      elapsedSecondsSince(started),
+    );
 
     return {
       received: messages.length,

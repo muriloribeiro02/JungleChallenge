@@ -1,11 +1,12 @@
-import type { MessagingLogger } from '../../ports/messaging-logger';
-import type { UnitOfWork } from '../../ports/unit-of-work';
 import {
   FAILURE_CODE_REFERENCE_NOT_FOUND,
   WAGER_TRANSACTION_STATUS_PENDING_REFERENCE,
   WAGER_TRANSACTION_STATUS_PROCESSED,
   WAGER_TRANSACTION_STATUS_REJECTED,
 } from '../../../domain/wager-transaction/wager-transaction.entity';
+import { noopMetrics, type MetricsPort } from '../../ports/metrics';
+import type { MessagingLogger } from '../../ports/messaging-logger';
+import type { UnitOfWork } from '../../ports/unit-of-work';
 import type { ReprocessPendingReferencesUseCase } from './reprocess-pending-references.use-case';
 
 export type ProcessPendingReferencesOptions = {
@@ -33,6 +34,7 @@ export class ProcessPendingReferencesUseCase {
     private readonly reprocess: ReprocessPendingReferencesUseCase,
     private readonly logger: MessagingLogger,
     private readonly options: ProcessPendingReferencesOptions,
+    private readonly metrics: MetricsPort = noopMetrics,
   ) {}
 
   async processBatch(): Promise<ProcessPendingReferencesBatchResult> {
@@ -72,6 +74,13 @@ export class ProcessPendingReferencesUseCase {
         kind: result.kind,
       });
     }
+
+    this.metrics.recordPendingReferenceBatch({
+      processed,
+      rejected,
+      expired,
+      deferred,
+    });
 
     return {
       claimed: claimed.length,

@@ -3,6 +3,7 @@ import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { NoopAuthGuard } from './api/auth/noop-auth.guard';
 import { GlobalHttpExceptionFilter } from './api/http/filters/http-exception.filter';
 import { HealthController } from './api/http/health/health.controller';
+import { MetricsController } from './api/http/metrics/metrics.controller';
 import { WalletsController } from './api/http/wallets/wallets.controller';
 import { WageringController } from './api/http/wagering/wagering.controller';
 import {
@@ -20,7 +21,12 @@ import { GetWagerTransactionUseCase } from './application/use-cases/wager/get-wa
 import { SubmitWagerTransactionUseCase } from './application/use-cases/wager/submit-wager-transaction.use-case';
 
 @Module({
-  controllers: [HealthController, WalletsController, WageringController],
+  controllers: [
+    HealthController,
+    MetricsController,
+    WalletsController,
+    WageringController,
+  ],
   providers: [
     {
       provide: APP_COMPOSITION,

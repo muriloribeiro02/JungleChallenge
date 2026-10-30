@@ -3,6 +3,11 @@ import {
   LEDGER_DIRECTION_CREDIT,
   LEDGER_DIRECTION_DEBIT,
 } from '../../../domain/wallet-ledger/wallet-ledger-entry.entity';
+import {
+  elapsedSecondsSince,
+  noopMetrics,
+  type MetricsPort,
+} from '../../ports/metrics';
 import type { MessagingLogger } from '../../ports/messaging-logger';
 import type { UnitOfWork } from '../../ports/unit-of-work';
 import { WalletNotFoundError } from './get-wallet-balance.errors';
@@ -23,12 +28,13 @@ export type ReconcileWalletOutput = {
 
 /**
  * Reconcilia saldo materializado vs ledger (somente leitura; não corrige).
- * Divergências são logadas (métricas ficam a cargo da observabilidade futura).
+ * Divergências são logadas e contadas em métricas (sem expor saldos nos labels).
  */
 export class ReconcileWalletUseCase {
   constructor(
     private readonly unitOfWork: UnitOfWork,
     private readonly logger?: MessagingLogger,
+    private readonly metrics: MetricsPort = noopMetrics,
   ) {}
 
   async execute(input: ReconcileWalletInput): Promise<ReconcileWalletOutput> {
@@ -36,7 +42,8 @@ export class ReconcileWalletUseCase {
       throw new InvalidReconcileWalletInputError('walletId é obrigatório');
     }
 
-    return this.unitOfWork.run(async (repos) => {
+    const started = process.hrtime.bigint();
+    const output = await this.unitOfWork.run(async (repos) => {
       const wallet = await repos.wallets.findById(input.walletId);
       if (!wallet) {
         throw new WalletNotFoundError(input.walletId);
@@ -75,9 +82,14 @@ export class ReconcileWalletUseCase {
         checkedEntries: entries.length,
       };
     });
+
+    this.metrics.recordReconciliation({
+      consistent: output.consistent,
+      durationSeconds: elapsedSecondsSince(started),
+    });
+    return output;
   }
 }
-
 function absDiff(a: Money, b: Money): Money {
   if (a.isLessThan(b)) {
     return b.subtract(a);

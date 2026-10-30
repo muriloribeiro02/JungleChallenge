@@ -1,5 +1,6 @@
 import type { OutboxMessage } from '../../domain/outbox/outbox-message.entity';
 import type { MessageBus } from '../ports/message-bus';
+import { noopMetrics, type MetricsPort } from '../ports/metrics';
 import type { MessagingLogger } from '../ports/messaging-logger';
 import type { UnitOfWork } from '../ports/unit-of-work';
 import { shutdownGate } from './shutdown-gate';
@@ -25,6 +26,7 @@ export class OutboxPublisher {
     private readonly bus: MessageBus,
     private readonly logger: MessagingLogger,
     private readonly options: OutboxPublisherOptions,
+    private readonly metrics: MetricsPort = noopMetrics,
   ) {}
 
   async publishBatch(): Promise<{ claimed: number; published: number; failed: number }> {
@@ -75,6 +77,11 @@ export class OutboxPublisher {
 
         await this.markPublished(message.id);
         published += 1;
+        const lagSeconds =
+          (Date.now() - message.occurredAt.getTime()) / 1000;
+        if (Number.isFinite(lagSeconds) && lagSeconds >= 0) {
+          this.metrics.observeOutboxPublishLag(lagSeconds);
+        }
 
         this.logger.info('outbox.event_published', {
           eventId: message.id,
@@ -95,6 +102,13 @@ export class OutboxPublisher {
           correlationId,
         });
       }
+    }
+
+    if (published > 0) {
+      this.metrics.recordOutboxPublished(published);
+    }
+    if (failed > 0) {
+      this.metrics.recordOutboxPublishFailed(failed);
     }
 
     return { claimed: claimed.length, published, failed };
