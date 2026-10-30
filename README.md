@@ -39,7 +39,7 @@ Variáveis principais (ver `.env.example`):
 | `SQS_INBOUND_DLQ_URL` | `…/jungle-wager-transactions-dlq.fifo` | DLQ inbound |
 | `WORKERS_ENABLED` | `false` no `.env` local; `true` nos `app-*` | Loops Outbox/Inbox/Inbound/Pending |
 | `OUTBOX_CLAIM_LEASE_SECONDS` | `60` | Lease do claim Outbox |
-| `SQS_MAX_RECEIVE_COUNT` | `5` | Redrive → DLQ |
+| `SQS_MAX_RECEIVE_COUNT` | `5` | Usado em `sqsEnv`/testes; redrive **efetivo** LocalStack = `5` no `init-sqs.sh` (não altera fila já criada) |
 
 ## Subir a infraestrutura
 
@@ -110,7 +110,7 @@ Detalhe: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 | `GET` | `/wagering/transactions/:transactionId` | |
 | `GET` | `/providers/:providerId/wagering/transactions/:externalTransactionId` | |
 | `GET` | `/health/live` | liveness |
-| `GET` | `/health/ready` | Postgres + SQS (503 se down / stopping) |
+| `GET` | `/health/ready` | PG `SELECT 1` + `receive(1,0)` na fila **events** (não read-only; inbound fora do probe; 503 se down / stopping) |
 | `GET` | `/metrics` | Prometheus text |
 
 Money sempre como **string** (`"25.00"`), nunca `number`.

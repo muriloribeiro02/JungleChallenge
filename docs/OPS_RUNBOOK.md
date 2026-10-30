@@ -21,7 +21,8 @@ Documentos relacionados:
 | Inbound FIFO | `jungle-wager-transactions.fifo` |
 | Inbound DLQ | `jungle-wager-transactions-dlq.fifo` |
 | URLs no `.env.example` | `SQS_*_QUEUE_URL` / `SQS_*_DLQ_URL` |
-| `maxReceiveCount` | `5` (`SQS_MAX_RECEIVE_COUNT` / redrive no `init-sqs.sh`) |
+| `maxReceiveCount` efetivo (LocalStack) | **`5` hardcoded** em `docker/localstack/init-sqs.sh` (RedrivePolicy) |
+| `SQS_MAX_RECEIVE_COUNT` | Env / `sqsEnv` (testes que recriam atributos); **não** altera fila já criada pelo init |
 | Visibility | `30s` (`SQS_VISIBILITY_TIMEOUT_SECONDS`) |
 | Outbox lease | `OUTBOX_CLAIM_LEASE_SECONDS` (default 60) |
 | Clear Outbox | `bun run ops:clear-outbox-intervention -- <uuid>` |
@@ -180,18 +181,19 @@ Comportamento (código + ARCHITECTURE):
 
 - TTL **24h** a partir de `pending_reference_at`.
 - Backoff: `next_attempt_at = now + min(300, 2^n)` s; `n = pending_attempt_count` incrementa no **defer**, não no claim.
-- Worker: `ProcessPendingReferencesUseCase` (intervalo `WORKER_PENDING_INTERVAL_MS` nos `app-*`).
+- Worker periódico: `ProcessPendingReferencesUseCase` (intervalo `WORKER_PENDING_INTERVAL_MS` nos `app-*`).
+- Gatilho Inbox: `DomainEventHandler` em `WagerTransactionProcessed` (BET/WIN/REFUND/ROLLBACK) chama `ReprocessPendingReferencesUseCase` na mesma UoW do Inbox (`externalReference` = `externalTransactionId` da tx processada). LOSS/OPENING não disparam esse caminho.
 - Expiração → `REJECTED` + `failure_code = REFERENCE_NOT_FOUND` + evento Outbox.
 
 ### Resultado esperado
 
-- Com a BET/referência chegando a tempo → reprocessa para `PROCESSED`.
+- Com a BET/referência chegando a tempo → reprocessa para `PROCESSED` (worker e/ou Inbox).
 - Após TTL sem referência → `REJECTED` / `REFERENCE_NOT_FOUND`.
 
 ### Cuidados
 
 - Não apague a linha `PENDING_REFERENCE` para “destravar”.
-- Exigir workers ligados (`apps:up`) para o worker de pending rodar.
+- Exigir workers ligados (`apps:up`) para o worker de pending **e** o Inbox de domain events rodarem.
 
 ---
 
@@ -204,13 +206,16 @@ Resumo:
 | Item | Valor |
 |------|--------|
 | Sintoma | `intervention_required_at` preenchido; gauge `dwp_outbox_intervention_required_events` |
-| Limiar | `attempts >= 10` (attempts sobe no **claim**) |
+| `attempts` | Sobe no **claim**. Claims abandonados podem elevar `attempts` **sem** intervenção |
+| Limiar | `attempts >= 10` **isoladamente não pausa**. Intervenção após **falha de publish** com `attempts >= 10` |
+| Pausa | Estado = `intervention_required_at` preenchido; claim exige `intervention_required_at IS NULL` |
 | Clear | `bun run ops:clear-outbox-intervention -- <eventId-uuid>` |
 | Efeito | limpa intervenção; `next_attempt_at = now`; **não** reseta `attempts` nem payload |
 
 ### Cuidados
 
 - Corrigir causa raiz (SQS/LocalStack) antes do clear.
+- Gauge `dwp_outbox_high_attempt_events` (attempts ≥ 10 unpublished) **≠** necessariamente em intervenção.
 - Sem endpoint HTTP de administração.
 
 ---
@@ -221,9 +226,9 @@ Resumo:
 |-----------|------|---------------------------|
 | Outbox backoff | `next_attempt_at` | `min(300, 2^attempts)` segundos após falha de publish (&lt; limiar 10) |
 | Outbox lease | `locked_until` | Claim define lease (`OUTBOX_CLAIM_LEASE_SECONDS`); crash → outra instância após expirar |
-| Outbox intervenção | `intervention_required_at` | ≥ 10 attempts → sem claim automático |
+| Outbox intervenção | `intervention_required_at` | Pausa só com coluna preenchida (após falha de publish + attempts ≥ 10); claim exclui essas linhas |
 | SQS visibility | fila | Default 30s; falha de consumer pode usar `ChangeMessageVisibility(0)` para redelivery rápida |
-| SQS → DLQ | redrive | Após `maxReceiveCount` (5) |
+| SQS → DLQ | redrive | Após `maxReceiveCount` **5** do `init-sqs.sh` (não o env sozinho em fila já criada) |
 | Inbox | `(consumer_name, message_id)` | Redelivery não reaplica efeito se já commitou |
 | Pending backoff | `pending_attempt_count` | defer; TTL 24h prevalece |
 
@@ -271,7 +276,13 @@ curl -s -i http://localhost:3001/health/ready
 ```
 
 - **live 200** — processo no ar (mesmo se dependências caíram).
-- **ready 503** — `DependencyHealthPort` (TypeORM + MessageBus/SQS) falhou, ou app em shutdown (`stopping`).
+- **ready 503** — `DependencyHealthPort` falhou, ou app em shutdown (`stopping`).
+
+O adapter `TypeOrmSqsDependencyHealth` (`/health/ready`):
+
+1. Consulta PostgreSQL (`SELECT 1`).
+2. Executa `messageBus.receive(1, 0)` na fila **events** — **não** é verificação SQS passiva/read-only; pode afetar a visibilidade de uma mensagem (mesmo brevemente).
+3. A fila **inbound FIFO** **não** é verificada por esse probe.
 
 Checagens de infra (`DATABASE_USER` / `DATABASE_NAME` do `.env`; defaults do `.env.example`: `jungle` / `jungle_db`):
 
@@ -289,6 +300,7 @@ Com postgres + localstack healthy e app iniciado: ready **200**.
 
 - Durante `apps:down` / SIGTERM, ready pode ir a 503 de propósito.
 - Live **não** prova que a fila está consumindo.
+- Mensagens `NotVisible` na events queue podem ser efeito colateral do probe de ready (além de workers). Prefira `get-queue-attributes`, não `receive-message`, para diagnóstico.
 
 ---
 

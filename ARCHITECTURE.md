@@ -25,9 +25,10 @@ Evidências apontam para arquivos reais da implementação. Onde algo **não** e
 14. [Status PENDING e FAILED no schema](#14-status-pending-e-failed-no-schema)
 15. [API HTTP e códigos](#15-api-http-e-códigos)
 16. [Workers, PENDING_REFERENCE, shutdown, métricas](#16-workers-pending_reference-shutdown-métricas)
-17. [Reversões REFUND / ROLLBACK](#17-reversões-refund--rollback)
-18. [Limitações conhecidas](#18-limitações-conhecidas)
-19. [Pontos sem comprovação / não inventados](#19-pontos-sem-comprovação--não-inventados)
+17. [Fluxos OPENING e LOSS](#17-fluxos-opening-e-loss)
+18. [Reversões REFUND / ROLLBACK](#18-reversões-refund--rollback)
+19. [Limitações conhecidas](#19-limitações-conhecidas)
+20. [Pontos sem comprovação / não inventados](#20-pontos-sem-comprovação--não-inventados)
 
 ---
 
@@ -71,7 +72,12 @@ Separar **Domain → Application → Infrastructure**, com **ports** na applicat
 
 ### Evidência
 
-- Ports: `src/application/ports/unit-of-work.ts`, `message-bus.ts`, `metrics.ts`
+- Ports (application):
+  - `src/application/ports/unit-of-work.ts` — `UnitOfWork`
+  - `src/application/ports/message-bus.ts` — `MessageBus`
+  - `src/application/ports/metrics.ts` — `MetricsPort`
+  - `src/application/ports/messaging-logger.ts` — `MessagingLogger`
+  - `src/application/ports/dependency-health.ts` — `DependencyHealthPort`
 - Composition: `src/composition/create-app-composition.ts`
 - Domínio sem Nest: `src/domain/**`
 
@@ -220,7 +226,13 @@ Consumidores deduplicam por **`(consumer_name, message_id)`** (`tryInsert`). Red
 
 ### Intervenção (E2.3.5)
 
-Backoff `min(300, 2^attempts)`; a partir de **10 attempts** (incrementados no **claim**) → `intervention_required_at` pausa claim automático. Recuperação: `ClearOutboxInterventionUseCase` / `bun run ops:clear-outbox-intervention`.  
+- `attempts` sobe no **claim** (não só em falha de publish). Claims abandonados (crash/shutdown) podem elevar `attempts` **sem** gerar intervenção.
+- **`attempts >= 10` isoladamente não pausa** o evento.
+- Após **falha de publicação**, se `attempts >= 10`, o publisher registra intervenção (`markInterventionRequired`) e preenche **`intervention_required_at`**.
+- O **estado de pausa** é `intervention_required_at` preenchido. O claim SQL exclui essas linhas (`intervention_required_at IS NULL`).
+- Backoff antes do limiar: `next_attempt_at = now + min(300, 2^attempts)` após falha de publish.
+- Recuperação: `ClearOutboxInterventionUseCase` / `bun run ops:clear-outbox-intervention` (não zera `attempts`).
+
 Detalhes: [`docs/OUTBOX_INTERVENTION_RUNBOOK.md`](docs/OUTBOX_INTERVENTION_RUNBOOK.md).
 
 ### Trade-offs at-least-once
@@ -357,12 +369,14 @@ Não há normalização monetária extra no hash além dos strings já validados
 
 1. Busca por `(providerId, idempotencyKey)`.
 2. Se existe e `existing.payloadHash !== payloadHash` → `IdempotencyPayloadConflictError` → HTTP **409**.
-3. Se hash igual → replay com `idempotentReplay: true` e snapshot original.
+3. Se hash igual → cada kind (PlaceBet / SettleWin / …) devolve o snapshot original via `buildReplayFromExisting` (sem novos side effects).
+4. O flag **`idempotentReplay: true`** é definido no **`SubmitWagerTransactionUseCase`** (quando há resultado prévio do kind / replay), **não** no PlaceBet isoladamente. A saída HTTP/métricas do Submit expõem esse campo.
 
 ### Evidência
 
 - Hash: `canonical-payload-hash.ts`
-- Comparação: `PlaceBetUseCase.buildReplayFromExisting` (padrão similar nos demais kinds)
+- Comparação por kind: `*UseCase.buildReplayFromExisting` (ex.: `PlaceBetUseCase`)
+- Flag de replay na API: `SubmitWagerTransactionUseCase` (`idempotentReplay`)
 
 ---
 
@@ -390,9 +404,10 @@ Fonte: `src/domain/wager-transaction/failure-codes.ts`.
 ### Persistência e API
 
 - Persistidos em `wager_transaction.failure_code` quando status = `REJECTED`.
-- Submit HTTP: rejeição de negócio → **200** + body com `status: REJECTED` e `failureCode` (não 4xx de negócio).
+- Submit HTTP: rejeição de negócio (pré-check) → **200** + body com `status: REJECTED` e `failureCode` (não 4xx de negócio).
 - `PENDING_REFERENCE` → **202**; `REFERENCE_NOT_FOUND` só após TTL (não no aceite pendente).
 - Conflitos de idempotência/id externo → **409** (erros de aplicação, não `failureCode` de negócio).
+- Race UNIQUE de reversão já existente: ver §18 — o caminho HTTP via Submit **não** tem a mesma semântica que `RefundWagerUseCase.execute` / `persistRejectedAfterRace`.
 
 ---
 
@@ -480,7 +495,7 @@ Não há método `fail()` nem factory que produza `FAILED` ou `PENDING` no domí
 | GET | `/wallets/:walletId` | 200 / 404 |
 | GET | `/wallets/:walletId/ledger?cursor&limit` | 200 / 404 |
 | POST | `/wallets/:walletId/reconciliation` | 200 / 404 |
-| POST | `/wagering/transactions` | 200 / 202 / 400 / 409 |
+| POST | `/wagering/transactions` | 200 / 202 / 400 / 404 / 409 |
 | GET | `/wagering/transactions/:transactionId` | 200 / 404 |
 | GET | `/providers/:providerId/wagering/transactions/:externalTransactionId` | 200 / 404 |
 | GET | `/health/live` | 200 |
@@ -490,12 +505,21 @@ Não há método `fail()` nem factory que produza `FAILED` ou `PENDING` no domí
 Mapeamento HTTP (contrato exige distinção clara, não códigos fixos):
 
 - **400** — validação / payload / `Idempotency-Key` ausente  
-- **404** — wallet ou transação inexistente  
-- **409** — wallet duplicada; idempotência key + payload diferente; unique id externo  
+- **404** — wallet ou transação inexistente (inclui wallet ausente em `POST /wagering/transactions`)  
+- **409** — wallet duplicada; idempotência key + payload diferente; unique id externo; race UNIQUE de reversão no Submit (ver §18)  
 - **200** — `PROCESSED` ou `REJECTED` (negócio no body)  
 - **202** — `PENDING_REFERENCE`  
-- **503** — readiness (PG/SQS / stopping)  
+- **503** — readiness (deps / stopping)  
 - **500** — inesperado (sem SQL/stack na resposta)
+
+#### `/health/ready` (probe real)
+
+Adapter `TypeOrmSqsDependencyHealth`:
+
+1. PostgreSQL: `SELECT 1` via TypeORM `DataSource`.
+2. SQS: `messageBus.receive(1, 0)` na fila **events** (bus principal / `SQS_MAIN_QUEUE_URL`).
+
+Essa verificação **não** é consulta passiva / read-only: um `ReceiveMessage` pode afetar a **visibilidade** de uma mensagem (mesmo brevemente, conforme visibility timeout do receive). A fila **inbound FIFO** **não** é verificada por este probe.
 
 Reconciliação: compara saldo materializado × Σ ledger; **não** corrige; log + métrica + resposta §9.
 
@@ -513,12 +537,19 @@ Por processo (`MessagingWorkersHost`): Outbox publish, Inbox domain events, Inbo
 - Backoff `next_attempt_at = now + min(300, 2^n)` (`n = pending_attempt_count` no **defer**, não no claim)
 - Claim: `FOR UPDATE SKIP LOCKED` + `locked_until`
 - Expiração → `REJECTED` + `REFERENCE_NOT_FOUND` + outbox na mesma UoW
+- **Worker periódico:** `ProcessPendingReferencesUseCase` reclama pendências elegíveis e chama `ReprocessPendingReferencesUseCase`.
+- **Gatilho Inbox:** ao consumir `WagerTransactionProcessed` (kinds `BET` / `WIN` / `REFUND` / `ROLLBACK`), `DomainEventHandler` (`src/application/messaging/domain-event-handler.ts`) chama `ReprocessPendingReferencesUseCase.executeWithRepos` com `externalReference = externalTransactionId` da linha processada — na **mesma UoW** do Inbox. Kinds `LOSS` e `OPENING` são ignorados por esse handler. Não inventa regras financeiras; só dispara o reprocesso já existente.
 
 ### Graceful shutdown (C3)
 
 - `enableShutdownHooks` → drain workers (`SHUTDOWN_DRAIN_MS`) → `DataSource.destroy`
 - Pré-ACK abort → redelivery; outbox claimada → `locked_until`
-- `/health/ready` → 503 se `stopping`
+- `/health/ready` → 503 se `stopping` (probe: ver §15)
+
+### Redrive SQS (LocalStack)
+
+- Valor **efetivo** nas filas criadas pelo init: `maxReceiveCount = 5` **hardcoded** em `docker/localstack/init-sqs.sh`.
+- `SQS_MAX_RECEIVE_COUNT` no `.env` alimenta `sqsEnv` (uso em testes que recriam atributos); **não** altera automaticamente uma fila já criada pelo init.
 
 ### Prometheus (D)
 
@@ -526,15 +557,50 @@ Porta `MetricsPort` + `safeMetrics`. Catálogo: [`docs/METRICS.md`](docs/METRICS
 
 ---
 
-## 17. Reversões REFUND / ROLLBACK
+## 17. Fluxos OPENING e LOSS
+
+### OPENING (abertura de carteira)
+
+`OpenWalletUseCase` (`POST /wallets`):
+
+- Saldo inicial **zero:** persiste só a wallet; **sem** ledger, **sem** `wager_transaction`, **sem** outbox.
+- Saldo inicial **&gt; 0:** na mesma UoW — wallet + `WagerTransaction` kind `OPENING` `PROCESSED` + lançamento de ledger **CREDIT** (0 → saldo inicial) + outbox `WagerTransactionProcessed` e `WalletBalanceChanged`.
+- Sem `FOR UPDATE` (criação). Duplicata `(playerId, currency)` → conflito / HTTP **409**.
+
+### LOSS
+
+`SettleLossUseCase`:
+
+- Amount deve ser **zero** (validação de negócio).
+- Com `FOR UPDATE` na wallet para serializar com outros kinds; **não** altera saldo; **não** cria ledger; **não** emite `WalletBalanceChanged`.
+- Persiste `wager_transaction` `LOSS` `PROCESSED` + outbox `WagerTransactionProcessed` (snapshot do saldo observado).
+
+---
+
+## 18. Reversões REFUND / ROLLBACK
 
 Contrato §7.4: sem reverter duas vezes pelo **mesmo tipo**.
 
 **Interpretação adicional implementada:** no máximo **uma** reversão `PROCESSED` (`REFUND` **ou** `ROLLBACK`) por `(providerId, external_reference)` — índice `UQ_wager_transaction_processed_reversal_ref` (migration 011). Impede crédito duplicado REFUND+ROLLBACK da mesma BET. `ROLLBACK` de um `REFUND` permanece válido (referência = id externo do REFUND).
 
+### Race UNIQUE × caminhos de execução
+
+Pré-check que encontra reversão `PROCESSED` → persiste `REJECTED` + `REFERENCE_ALREADY_REVERSED` → HTTP **200** (via Submit).
+
+Se duas reversões correm em paralelo e a constraint UNIQUE dispara:
+
+| Caminho | Comportamento atual |
+|---------|---------------------|
+| HTTP / `SubmitWagerTransactionUseCase.execute` | Propaga `ReferenceAlreadyReversedConflictError` → HTTP **409**; **não** persiste `REJECTED` nesse catch |
+| `RefundWagerUseCase.execute` (direto) | `persistRejectedAfterRace` → `REJECTED` + `REFERENCE_ALREADY_REVERSED` |
+| `RollbackWagerUseCase.execute` (direto) | Mesmo padrão de race handling que o Refund (persistência de rejeição após race) |
+| Reprocess pending | Trata a race e pode persistir rejeição (`rejectAfterUniqueRace`) |
+
+**Os caminhos não têm semântica HTTP idêntica.** Diferença registrada como limitação conhecida (§19) até decisão técnica posterior.
+
 ---
 
-## 18. Limitações conhecidas
+## 19. Limitações conhecidas
 
 - OpenTelemetry tracing **não** implementado.
 - Counters Prometheus zeram no restart do processo; DLQ depth é aproximada (SQS).
@@ -542,10 +608,12 @@ Contrato §7.4: sem reverter duas vezes pelo **mesmo tipo**.
 - Auth IdP **não** implementada (apenas extensão).
 - Status `FAILED` / `PENDING` no CHECK **sem** ciclo de vida no domínio.
 - Intervenção Outbox é operacional via CLI, **sem** endpoint HTTP admin.
+- Race UNIQUE REFUND/ROLLBACK: Submit HTTP pode responder **409** sem `REJECTED`; use case direto de Refund/Rollback pode persistir `REJECTED` — semânticas distintas (§18).
+- `/health/ready` não é probe SQS read-only: usa `receive(1, 0)` na fila events; inbound FIFO fora do probe (§15).
 
 ---
 
-## 19. Pontos sem comprovação / não inventados
+## 20. Pontos sem comprovação / não inventados
 
 | Afirmação | Status |
 |-----------|--------|
