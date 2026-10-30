@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   WagerTransactionPendingReferenceEvent,
   WagerTransactionRejectedEvent,
-} from '../../domain/outbox/domain-event';
+} from '../../domain/events/domain-event';
 import type { WagerTransaction } from '../../domain/wager-transaction/wager-transaction.entity';
 
 const EVENT_ENVELOPE_VERSION = 1;

@@ -14,8 +14,8 @@ import {
 import {
   buildWagerTransactionProcessedEvent,
   buildWalletBalanceChangedEvent,
-} from '../../events/wallet-opening.events';
-import type { UnitOfWork } from '../../unit-of-work/unit-of-work';
+} from '../../events/wallet-balance.events';
+import type { UnitOfWork } from '../../ports/unit-of-work';
 import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import {
   computeWinPayloadHash,

@@ -10,7 +10,7 @@ import {
 import type {
   TransactionalRepositories,
   UnitOfWork,
-} from '../../src/application/unit-of-work/unit-of-work';
+} from '../../src/application/ports/unit-of-work';
 import { computeBetPayloadHash } from '../../src/application/wager/canonical-payload-hash';
 import { Money } from '../../src/domain/money/money';
 import type { OutboxMessage } from '../../src/domain/outbox/outbox-message.entity';

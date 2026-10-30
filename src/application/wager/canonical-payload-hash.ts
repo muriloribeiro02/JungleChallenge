@@ -1,3 +1,6 @@
+/**
+ * Policies/helpers compartilhados entre use cases de wager (não são use cases).
+ */
 import { createHash } from 'node:crypto';
 
 /**

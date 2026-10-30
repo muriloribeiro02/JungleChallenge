@@ -126,7 +126,7 @@ export class WalletLedgerEntry {
   }
 
   private static freeze(entry: WalletLedgerEntry): WalletLedgerEntry {
-    return Object.freeze(entry);
+    return Object.freeze(entry) as WalletLedgerEntry;
   }
 
   private static assertRequiredId(value: string, field: string): void {

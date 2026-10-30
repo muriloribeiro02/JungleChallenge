@@ -1,31 +1,31 @@
 import { InboxMessage } from '../../domain/inbox/inbox-message.entity';
-import type { DomainEventEnvelope } from '../../domain/outbox/domain-event';
-import { sqsEnv } from '../../infrastructure/messaging/sqs.env';
-import type { UnitOfWork } from '../unit-of-work/unit-of-work';
+import type { DomainEventEnvelope } from '../../domain/events/domain-event';
+import type { MessageBus, ReceivedBusMessage } from '../ports/message-bus';
+import type { MessagingLogger } from '../ports/messaging-logger';
+import type { UnitOfWork } from '../ports/unit-of-work';
 import type { DomainEventHandler } from './domain-event-handler';
-import type { MessageBus, ReceivedBusMessage } from './message-bus';
-import {
-  ConsoleMessagingLogger,
-  type MessagingLogger,
-} from './messaging-logger';
+
+export type InboxConsumerOptions = {
+  maxMessages: number;
+  waitSeconds: number;
+};
 
 /**
- * Consome SQS com deduplicação via Inbox (mesma transação SQL do efeito).
- * ACK (delete) somente após commit bem-sucedido.
+ * Consome mensagens do MessageBus com deduplicação via Inbox (mesma TX do efeito).
+ * ACK somente após commit bem-sucedido.
  *
  * - Falha antes do commit → sem ACK → redelivery.
  * - Falha após commit e antes do ACK → redelivery → Inbox detecta duplicata → ACK sem reprocessar.
  * - Rejeição de negócio no use case é sucesso de mensageria (já persistida).
- * - maxReceiveCount / DLQ ficam a cargo do SQS (LocalStack).
+ * - maxReceiveCount / DLQ ficam a cargo do transporte (ex.: SQS).
  */
 export class InboxConsumer {
   constructor(
     private readonly bus: MessageBus,
     private readonly unitOfWork: UnitOfWork,
     private readonly handler: DomainEventHandler,
-    private readonly logger: MessagingLogger = new ConsoleMessagingLogger(),
-    private readonly maxMessages = sqsEnv.receiveMaxMessages,
-    private readonly waitSeconds = sqsEnv.receiveWaitSeconds,
+    private readonly logger: MessagingLogger,
+    private readonly options: InboxConsumerOptions,
   ) {}
 
   async pollOnce(): Promise<{
@@ -34,7 +34,10 @@ export class InboxConsumer {
     duplicates: number;
     failed: number;
   }> {
-    const messages = await this.bus.receive(this.maxMessages, this.waitSeconds);
+    const messages = await this.bus.receive(
+      this.options.maxMessages,
+      this.options.waitSeconds,
+    );
     let processed = 0;
     let duplicates = 0;
     let failed = 0;
@@ -51,8 +54,7 @@ export class InboxConsumer {
       } catch (error) {
         failed += 1;
         // Decisão: visibility=0 após falha técnica para redelivery imediata
-        // (ApproximateReceiveCount / maxReceiveCount / DLQ continuam no SQS).
-        // VisibilityTimeout da fila ainda vale se changeVisibility falhar.
+        // (ApproximateReceiveCount / maxReceiveCount / DLQ continuam no transporte).
         if (this.bus.changeVisibility) {
           try {
             await this.bus.changeVisibility(message.receiptHandle, 0);
@@ -136,7 +138,7 @@ export class InboxConsumer {
 function parseEnvelope(body: string): DomainEventEnvelope {
   const parsed = JSON.parse(body) as DomainEventEnvelope;
   if (!parsed || typeof parsed !== 'object' || !parsed.eventType) {
-    throw new Error('mensagem SQS inválida: envelope ausente');
+    throw new Error('mensagem inválida: envelope ausente');
   }
   return parsed;
 }

@@ -1,17 +1,18 @@
-import type { DomainEventEnvelope } from '../../domain/outbox/domain-event';
-import type { TransactionalRepositories } from '../unit-of-work/unit-of-work';
-import { ReprocessPendingReferencesUseCase } from '../use-cases/wager/reprocess-pending-references.use-case';
-import type { UnitOfWork } from '../unit-of-work/unit-of-work';
+import type { DomainEventEnvelope } from '../../domain/events/domain-event';
+import type { TransactionalRepositories } from '../ports/unit-of-work';
+import type { ReprocessPendingReferencesUseCase } from '../use-cases/wager/reprocess-pending-references.use-case';
 
 /**
- * Processa eventos de domínio recebidos via Inbox/SQS.
+ * Processa eventos de domínio recebidos via Inbox.
  * Não duplica regras financeiras — delega aos use cases.
  *
  * Decisão: WagerTransactionProcessed (BET/WIN/REFUND/ROLLBACK) dispara
  * reprocessamento de PENDING_REFERENCE pela externalTransactionId da linha.
  */
 export class DomainEventHandler {
-  constructor(private readonly unitOfWork: UnitOfWork) {}
+  constructor(
+    private readonly reprocessPending: ReprocessPendingReferencesUseCase,
+  ) {}
 
   /**
    * Executa efeitos na mesma transação do caller (Inbox insert + negócio).
@@ -47,8 +48,7 @@ export class DomainEventHandler {
       return 'ignored';
     }
 
-    const reprocess = new ReprocessPendingReferencesUseCase(this.unitOfWork);
-    await reprocess.executeWithRepos(repos, {
+    await this.reprocessPending.executeWithRepos(repos, {
       providerId: tx.providerId,
       externalReference: tx.externalTransactionId,
     });

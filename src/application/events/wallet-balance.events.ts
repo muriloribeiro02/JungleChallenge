@@ -5,7 +5,7 @@ import type { WalletLedgerEntry } from '../../domain/wallet-ledger/wallet-ledger
 import type {
   WagerTransactionProcessedEvent,
   WalletBalanceChangedEvent,
-} from '../../domain/outbox/domain-event';
+} from '../../domain/events/domain-event';
 
 const EVENT_ENVELOPE_VERSION = 1;
 

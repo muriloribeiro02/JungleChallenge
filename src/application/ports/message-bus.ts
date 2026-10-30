@@ -1,5 +1,5 @@
 /**
- * Porta de mensageria (SQS). Infraestrutura não vaza para o domínio.
+ * Porta de mensageria. Implementação (ex.: SQS) fica na infrastructure.
  */
 export type BusMessage = {
   /** Identidade estável do evento (eventId). */

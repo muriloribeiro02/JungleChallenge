@@ -2,17 +2,20 @@ import { randomUUID } from 'node:crypto';
 import { DomainEventHandler } from '../../src/application/messaging/domain-event-handler';
 import { InboxConsumer } from '../../src/application/messaging/inbox-consumer';
 import type {
-  BusMessage,
   MessageBus,
   ReceivedBusMessage,
-} from '../../src/application/messaging/message-bus';
+} from '../../src/application/ports/message-bus';
 import type {
   TransactionalRepositories,
   UnitOfWork,
-} from '../../src/application/unit-of-work/unit-of-work';
+} from '../../src/application/ports/unit-of-work';
 import { InboxMessage } from '../../src/domain/inbox/inbox-message.entity';
-import type { DomainEventEnvelope } from '../../src/domain/outbox/domain-event';
+import type { DomainEventEnvelope } from '../../src/domain/events/domain-event';
+import { ConsoleMessagingLogger } from '../../src/infrastructure/logging/console-messaging-logger';
 import { FakeInboxRepository } from '../helpers/fake-inbox';
+
+const logger = new ConsoleMessagingLogger();
+const defaultOptions = { maxMessages: 10, waitSeconds: 0 };
 
 class MemoryBus implements MessageBus {
   queue: ReceivedBusMessage[] = [];
@@ -83,7 +86,13 @@ describe('InboxConsumer (unit)', () => {
       },
     } as unknown as DomainEventHandler;
 
-    const consumer = new InboxConsumer(bus, uow, handler);
+    const consumer = new InboxConsumer(
+      bus,
+      uow,
+      handler,
+      logger,
+      defaultOptions,
+    );
     const envelope: DomainEventEnvelope = {
       eventId: randomUUID(),
       eventType: 'WalletBalanceChanged',
@@ -117,7 +126,13 @@ describe('InboxConsumer (unit)', () => {
       },
     } as unknown as DomainEventHandler;
 
-    const consumer = new InboxConsumer(bus, uow, handler);
+    const consumer = new InboxConsumer(
+      bus,
+      uow,
+      handler,
+      logger,
+      defaultOptions,
+    );
     bus.enqueue({
       eventId,
       eventType: 'WalletBalanceChanged',
@@ -143,7 +158,13 @@ describe('InboxConsumer (unit)', () => {
       },
     } as unknown as DomainEventHandler;
 
-    const consumer = new InboxConsumer(bus, uow, handler);
+    const consumer = new InboxConsumer(
+      bus,
+      uow,
+      handler,
+      logger,
+      defaultOptions,
+    );
     bus.enqueue({
       eventId: randomUUID(),
       eventType: 'WagerTransactionProcessed',

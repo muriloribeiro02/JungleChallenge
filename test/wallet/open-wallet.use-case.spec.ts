@@ -3,7 +3,7 @@ import { OpenWalletUseCase } from '../../src/application/use-cases/wallet/open-w
 import type {
   TransactionalRepositories,
   UnitOfWork,
-} from '../../src/application/unit-of-work/unit-of-work';
+} from '../../src/application/ports/unit-of-work';
 import { InvalidMoneyError } from '../../src/domain/money/money.errors';
 import type { OutboxMessage } from '../../src/domain/outbox/outbox-message.entity';
 import type { OutboxMessageRepository } from '../../src/domain/outbox/outbox-message.repository';

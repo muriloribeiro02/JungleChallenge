@@ -1,30 +1,28 @@
-import type { DataSource } from 'typeorm';
 import type { OutboxMessage } from '../../domain/outbox/outbox-message.entity';
-import { TypeOrmOutboxMessageRepository } from '../../infrastructure/repository/outbox/typeorm-outbox-message.repository';
-import { OutboxMessageOrmEntity } from '../../infrastructure/repository/outbox/outbox-message.orm-entity';
-import { sqsEnv } from '../../infrastructure/messaging/sqs.env';
-import type { MessageBus } from './message-bus';
-import {
-  ConsoleMessagingLogger,
-  type MessagingLogger,
-} from './messaging-logger';
+import type { MessageBus } from '../ports/message-bus';
+import type { MessagingLogger } from '../ports/messaging-logger';
+import type { UnitOfWork } from '../ports/unit-of-work';
+
+export type OutboxPublisherOptions = {
+  batchSize: number;
+  leaseSeconds: number;
+};
 
 /**
- * Publica eventos da outbox no MessageBus (SQS).
+ * Publica eventos da outbox no MessageBus.
  *
- * Fluxo: claim (SKIP LOCKED) → publish → markPublished.
- * Se o SQS aceitar e o mark falhar, redelivery publica de novo (at-least-once);
+ * Fluxo: claim → publish → markPublished.
+ * Se o bus aceitar e o mark falhar, redelivery publica de novo (at-least-once);
  * a Inbox no consumer evita efeitos duplicados.
  *
  * Decisão: backoff next_attempt_at = min(300, 2^attempts) segundos.
  */
 export class OutboxPublisher {
   constructor(
-    private readonly dataSource: DataSource,
+    private readonly unitOfWork: UnitOfWork,
     private readonly bus: MessageBus,
-    private readonly logger: MessagingLogger = new ConsoleMessagingLogger(),
-    private readonly batchSize = sqsEnv.publisherBatchSize,
-    private readonly leaseSeconds = sqsEnv.claimLeaseSeconds,
+    private readonly logger: MessagingLogger,
+    private readonly options: OutboxPublisherOptions,
   ) {}
 
   async publishBatch(): Promise<{ claimed: number; published: number; failed: number }> {
@@ -80,33 +78,22 @@ export class OutboxPublisher {
   }
 
   private async claim(): Promise<OutboxMessage[]> {
-    return this.dataSource.transaction(async (manager) => {
-      const repo = new TypeOrmOutboxMessageRepository(
-        manager.getRepository(OutboxMessageOrmEntity),
-        manager,
-      );
-      return repo.claimUnpublished(this.batchSize, this.leaseSeconds);
-    });
+    return this.unitOfWork.run((repos) =>
+      repos.outboxMessages.claimUnpublished(
+        this.options.batchSize,
+        this.options.leaseSeconds,
+      ),
+    );
   }
 
   private async markPublished(id: string): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
-      const repo = new TypeOrmOutboxMessageRepository(
-        manager.getRepository(OutboxMessageOrmEntity),
-        manager,
-      );
-      await repo.markPublished(id);
-    });
+    await this.unitOfWork.run((repos) => repos.outboxMessages.markPublished(id));
   }
 
   private async markFailed(id: string, nextAttemptAt: Date): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
-      const repo = new TypeOrmOutboxMessageRepository(
-        manager.getRepository(OutboxMessageOrmEntity),
-        manager,
-      );
-      await repo.markPublishFailed(id, nextAttemptAt);
-    });
+    await this.unitOfWork.run((repos) =>
+      repos.outboxMessages.markPublishFailed(id, nextAttemptAt),
+    );
   }
 }
 

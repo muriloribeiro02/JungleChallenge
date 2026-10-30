@@ -2,7 +2,7 @@ import type { DataSource, EntityManager } from 'typeorm';
 import type {
   TransactionalRepositories,
   UnitOfWork,
-} from '../../application/unit-of-work/unit-of-work';
+} from '../../application/ports/unit-of-work';
 import { TypeOrmInboxMessageRepository } from '../repository/inbox/typeorm-inbox-message.repository';
 import { InboxMessageOrmEntity } from '../repository/inbox/inbox-message.orm-entity';
 import { TypeOrmOutboxMessageRepository } from '../repository/outbox/typeorm-outbox-message.repository';

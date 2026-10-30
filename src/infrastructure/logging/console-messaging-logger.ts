@@ -1,18 +1,11 @@
-export type MessagingLogFields = Record<
-  string,
-  string | number | boolean | null | undefined
->;
+import type {
+  MessagingLogFields,
+  MessagingLogger,
+} from '../../application/ports/messaging-logger';
 
 /**
- * Logger estruturado mínimo para publisher/consumer.
- * Decisão: JSON em uma linha no stdout (sem PII).
+ * Logger estruturado: JSON em uma linha no stdout (sem PII).
  */
-export interface MessagingLogger {
-  info(event: string, fields?: MessagingLogFields): void;
-  warn(event: string, fields?: MessagingLogFields): void;
-  error(event: string, fields?: MessagingLogFields): void;
-}
-
 export class ConsoleMessagingLogger implements MessagingLogger {
   info(event: string, fields: MessagingLogFields = {}): void {
     console.log(JSON.stringify({ level: 'info', event, ...fields }));

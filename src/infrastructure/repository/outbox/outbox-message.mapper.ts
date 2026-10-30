@@ -1,4 +1,4 @@
-import type { DomainEventEnvelope } from '../../../domain/outbox/domain-event';
+import type { DomainEventEnvelope } from '../../../domain/events/domain-event';
 import { OutboxMessage } from '../../../domain/outbox/outbox-message.entity';
 import { OutboxMessageOrmEntity } from './outbox-message.orm-entity';
 

@@ -10,13 +10,55 @@ import type { DataSource } from 'typeorm';
 import { DomainEventHandler } from '../../src/application/messaging/domain-event-handler';
 import { InboxConsumer } from '../../src/application/messaging/inbox-consumer';
 import { OutboxPublisher } from '../../src/application/messaging/outbox-publisher';
+import type { MessageBus } from '../../src/application/ports/message-bus';
+import type { UnitOfWork } from '../../src/application/ports/unit-of-work';
 import { OpenWalletUseCase } from '../../src/application/use-cases/wallet/open-wallet.use-case';
 import { PlaceBetUseCase } from '../../src/application/use-cases/wager/place-bet.use-case';
 import { RefundWagerUseCase } from '../../src/application/use-cases/wager/refund-wager.use-case';
+import { ReprocessPendingReferencesUseCase } from '../../src/application/use-cases/wager/reprocess-pending-references.use-case';
 import dataSource from '../../src/infrastructure/database/data-source';
+import { ConsoleMessagingLogger } from '../../src/infrastructure/logging/console-messaging-logger';
 import { SqsMessageBus } from '../../src/infrastructure/messaging/sqs-message-bus';
 import { sqsEnv } from '../../src/infrastructure/messaging/sqs.env';
 import { TypeOrmUnitOfWork } from '../../src/infrastructure/unit-of-work/typeorm-unit-of-work';
+
+const messagingLogger = new ConsoleMessagingLogger();
+const publisherOptions = {
+  batchSize: sqsEnv.publisherBatchSize,
+  leaseSeconds: sqsEnv.claimLeaseSeconds,
+};
+const consumerOptions = {
+  maxMessages: sqsEnv.receiveMaxMessages,
+  waitSeconds: sqsEnv.receiveWaitSeconds,
+};
+
+function makePublisher(uow: UnitOfWork, messageBus: MessageBus): OutboxPublisher {
+  return new OutboxPublisher(
+    uow,
+    messageBus,
+    messagingLogger,
+    publisherOptions,
+  );
+}
+
+function makeHandler(uow: UnitOfWork): DomainEventHandler {
+  return new DomainEventHandler(new ReprocessPendingReferencesUseCase(uow));
+}
+
+function makeConsumer(
+  messageBus: MessageBus,
+  uow: UnitOfWork,
+  handler: DomainEventHandler,
+  options = consumerOptions,
+): InboxConsumer {
+  return new InboxConsumer(
+    messageBus,
+    uow,
+    handler,
+    messagingLogger,
+    options,
+  );
+}
 
 /**
  * Integração real: PostgreSQL + LocalStack SQS.
@@ -55,16 +97,12 @@ describe('Messaging Outbox/Inbox + SQS (e2e)', () => {
 
     bus = SqsMessageBus.fromEnv(sqsEnv.mainQueueUrl);
     dlqBus = SqsMessageBus.fromEnv(sqsEnv.dlqUrl);
-    publisher = new OutboxPublisher(connection, bus);
     const uow = new TypeOrmUnitOfWork(connection);
+    publisher = makePublisher(uow, bus);
     openWallet = new OpenWalletUseCase(uow);
     placeBet = new PlaceBetUseCase(uow);
     refund = new RefundWagerUseCase(uow);
-    consumer = new InboxConsumer(
-      bus,
-      uow,
-      new DomainEventHandler(uow),
-    );
+    consumer = makeConsumer(bus, uow, makeHandler(uow));
 
     await purge(sqs, sqsEnv.mainQueueUrl);
     await purge(sqs, sqsEnv.dlqUrl);
@@ -193,7 +231,10 @@ describe('Messaging Outbox/Inbox + SQS (e2e)', () => {
     failingBus.publish = async () => {
       throw new Error('forced-publish-fail');
     };
-    const failingPublisher = new OutboxPublisher(connection, failingBus);
+    const failingPublisher = makePublisher(
+      new TypeOrmUnitOfWork(connection),
+      failingBus,
+    );
     const failed = await failingPublisher.publishBatch();
     expect(failed.failed).toBeGreaterThan(0);
 
@@ -242,9 +283,10 @@ describe('Messaging Outbox/Inbox + SQS (e2e)', () => {
     );
     expect(pending.length).toBeGreaterThan(0);
 
-    const p1 = new OutboxPublisher(connection, bus);
-    const p2 = new OutboxPublisher(connection, bus);
-    const p3 = new OutboxPublisher(connection, bus);
+    const uowPub = new TypeOrmUnitOfWork(connection);
+    const p1 = makePublisher(uowPub, bus);
+    const p2 = makePublisher(uowPub, bus);
+    const p3 = makePublisher(uowPub, bus);
 
     const [a, b, c] = await Promise.all([
       p1.publishBatch(),
@@ -349,7 +391,7 @@ describe('Messaging Outbox/Inbox + SQS (e2e)', () => {
 
   it('6) falha antes do commit não grava inbox e permite redelivery', async () => {
     const uow = new TypeOrmUnitOfWork(connection);
-    const exploding = new InboxConsumer(
+    const exploding = makeConsumer(
       bus,
       uow,
       {
@@ -464,7 +506,7 @@ describe('Messaging Outbox/Inbox + SQS (e2e)', () => {
     });
 
     const uow = new TypeOrmUnitOfWork(connection);
-    const exploding = new InboxConsumer(
+    const exploding = makeConsumer(
       bus,
       uow,
       {
@@ -472,9 +514,7 @@ describe('Messaging Outbox/Inbox + SQS (e2e)', () => {
           throw new Error('always-fail');
         },
       } as unknown as DomainEventHandler,
-      undefined,
-      1,
-      0,
+      { maxMessages: 1, waitSeconds: 0 },
     );
 
     // Falha → changeVisibility(0) → redelivery imediata até maxReceiveCount
@@ -510,13 +550,16 @@ describe('Messaging Outbox/Inbox + SQS (e2e)', () => {
     });
 
     const uow = new TypeOrmUnitOfWork(connection);
-    const makeConsumer = () =>
-      new InboxConsumer(bus, uow, new DomainEventHandler(uow), undefined, 1, 1);
+    const makeConsumerLocal = () =>
+      makeConsumer(bus, uow, makeHandler(uow), {
+        maxMessages: 1,
+        waitSeconds: 1,
+      });
 
     const results = await Promise.all([
-      makeConsumer().pollOnce(),
-      makeConsumer().pollOnce(),
-      makeConsumer().pollOnce(),
+      makeConsumerLocal().pollOnce(),
+      makeConsumerLocal().pollOnce(),
+      makeConsumerLocal().pollOnce(),
     ]);
 
     const processed = results.reduce((s, r) => s + r.processed, 0);

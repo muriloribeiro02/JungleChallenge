@@ -4,9 +4,9 @@ import type {
   BusMessage,
   MessageBus,
   ReceivedBusMessage,
-} from '../../src/application/messaging/message-bus';
+} from '../../src/application/ports/message-bus';
 import { OutboxMessage } from '../../src/domain/outbox/outbox-message.entity';
-import type { DomainEventEnvelope } from '../../src/domain/outbox/domain-event';
+import type { DomainEventEnvelope } from '../../src/domain/events/domain-event';
 
 class FakeBus implements MessageBus {
   published: BusMessage[] = [];

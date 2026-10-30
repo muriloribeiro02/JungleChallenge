@@ -9,7 +9,7 @@ import type {
   BusMessage,
   MessageBus,
   ReceivedBusMessage,
-} from '../../application/messaging/message-bus';
+} from '../../application/ports/message-bus';
 import { sqsEnv } from './sqs.env';
 
 export class SqsMessageBus implements MessageBus {

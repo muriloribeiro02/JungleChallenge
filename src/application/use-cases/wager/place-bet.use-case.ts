@@ -16,9 +16,9 @@ import {
 import {
   buildWagerTransactionProcessedEvent,
   buildWalletBalanceChangedEvent,
-} from '../../events/wallet-opening.events';
-import { buildWagerTransactionRejectedEvent } from '../../events/wager-bet.events';
-import type { UnitOfWork } from '../../unit-of-work/unit-of-work';
+} from '../../events/wallet-balance.events';
+import { buildWagerTransactionRejectedEvent } from '../../events/wager-outcome.events';
+import type { UnitOfWork } from '../../ports/unit-of-work';
 import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import {
   computeBetPayloadHash,

@@ -1,4 +1,4 @@
-import type { DomainEventEnvelope } from './domain-event';
+import type { DomainEventEnvelope } from '../events/domain-event';
 
 export type OutboxMessageState = {
   id: string;

@@ -60,10 +60,11 @@ test/
     db.ts                      # Postgres + insertWallet/tx/ledger/outbox
     migration-data-source.ts   # DataSource TypeORM com migrations 001–010
   messaging/
-    outbox-publisher.use-case.spec.ts     # unit: backoff / markPublished
+    outbox-publisher.use-case.spec.ts     # unit: backoff / markPublished (ports)
     inbox-consumer.use-case.spec.ts       # unit: inbox, duplicata, fail sem ACK + visibility=0
     messaging.migration.spec.ts           # unit: SQL 009/010
     messaging.sqs.e2e-spec.ts             # e2e: PG + LocalStack SQS (publish/claim/DLQ/inbox)
+                                          # wiring via UnitOfWork + composition helpers
   money/
     money.spec.ts              # unit: precisão e moeda em Money.from
   outbox/

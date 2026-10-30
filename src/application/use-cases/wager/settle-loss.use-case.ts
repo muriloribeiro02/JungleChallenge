@@ -10,8 +10,8 @@ import {
   ExternalTransactionIdConflictError,
   IdempotencyKeyConflictError,
 } from '../../../domain/wager-transaction/wager-transaction.errors';
-import { buildWagerTransactionProcessedEvent } from '../../events/wallet-opening.events';
-import type { UnitOfWork } from '../../unit-of-work/unit-of-work';
+import { buildWagerTransactionProcessedEvent } from '../../events/wallet-balance.events';
+import type { UnitOfWork } from '../../ports/unit-of-work';
 import { captureWalletSnapshot } from '../../wager/capture-wallet-snapshot';
 import {
   computeLossPayloadHash,
