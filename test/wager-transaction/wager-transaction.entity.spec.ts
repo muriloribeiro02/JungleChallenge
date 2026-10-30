@@ -89,9 +89,17 @@ describe('WagerTransaction', () => {
       const tx = WagerTransaction.rehydrate({
         id,
         walletId,
+        playerId: null,
         type: WAGER_TRANSACTION_TYPE_OPENING,
         status: WAGER_TRANSACTION_STATUS_PROCESSED,
         amount: { amount: '100.00', currency: 'BRL' },
+        providerId: null,
+        externalTransactionId: null,
+        idempotencyKey: null,
+        payloadHash: null,
+        roundId: null,
+        gameId: null,
+        failureCode: null,
       });
 
       expect(tx.type).toBe('OPENING');

@@ -56,6 +56,7 @@ export type WagerTransactionInsert = {
   gameId?: string | null;
   externalReference?: string | null;
   resolvedInternalReference?: string | null;
+  failureCode?: string | null;
 };
 
 export async function insertWagerTransaction(
@@ -67,12 +68,14 @@ export async function insertWagerTransaction(
       INSERT INTO wager_transaction (
         id, wallet_id, player_id, kind, status, amount, currency,
         provider_id, external_transaction_id, idempotency_key, payload_hash,
-        round_id, game_id, external_reference, resolved_internal_reference
+        round_id, game_id, external_reference, resolved_internal_reference,
+        failure_code
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11,
-        $12, $13, $14, $15
+        $12, $13, $14, $15,
+        $16
       )
       RETURNING *
     `,
@@ -92,6 +95,7 @@ export async function insertWagerTransaction(
       input.gameId ?? null,
       input.externalReference ?? null,
       input.resolvedInternalReference ?? null,
+      input.failureCode ?? null,
     ],
   );
 }
@@ -111,6 +115,7 @@ export type ExternalWagerDefaults = {
   gameId?: string;
   externalReference?: string | null;
   resolvedInternalReference?: string | null;
+  failureCode?: string | null;
   id?: string;
 };
 
@@ -121,13 +126,17 @@ export async function insertExternalWagerTransaction(
   const kind = input.kind ?? 'BET';
   const amount =
     input.amount ?? (kind === 'LOSS' ? '0.0000' : '10.0000');
+  const status = input.status ?? 'PENDING';
+  const failureCode =
+    input.failureCode ??
+    (status === 'REJECTED' ? 'INSUFFICIENT_FUNDS' : null);
 
   return insertWagerTransaction(client, {
     id: input.id,
     walletId: input.walletId,
     playerId: input.playerId,
     kind,
-    status: input.status ?? 'PENDING',
+    status,
     amount,
     currency: input.currency ?? 'BRL',
     providerId: input.providerId ?? 'provider-a',
@@ -138,6 +147,7 @@ export async function insertExternalWagerTransaction(
     gameId: input.gameId ?? 'game-1',
     externalReference: input.externalReference ?? null,
     resolvedInternalReference: input.resolvedInternalReference ?? null,
+    failureCode,
   });
 }
 

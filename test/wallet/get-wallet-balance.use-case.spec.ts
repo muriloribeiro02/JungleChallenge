@@ -19,6 +19,22 @@ class InMemoryWalletRepository implements WalletRepository {
   async findById(id: string): Promise<Wallet | null> {
     return this.items.get(id) ?? null;
   }
+
+  async findByIdForUpdate(id: string): Promise<Wallet | null> {
+    return this.findById(id);
+  }
+
+  async findByPlayerIdAndCurrency(
+    playerId: string,
+    currency: string,
+  ): Promise<Wallet | null> {
+    for (const wallet of this.items.values()) {
+      if (wallet.playerId === playerId && wallet.currency === currency) {
+        return wallet;
+      }
+    }
+    return null;
+  }
 }
 
 describe('GetWalletBalanceUseCase', () => {

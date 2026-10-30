@@ -48,6 +48,34 @@ export class Wallet {
   }
 
   /**
+   * Debita valor da carteira. Incrementa `version` somente se o saldo mudar.
+   */
+  debit(amount: Money): void {
+    if (!(amount instanceof Money)) {
+      throw new InvalidWalletError('amount deve ser uma instância de Money');
+    }
+
+    this.assertSameCurrency(amount);
+
+    if (!amount.isPositive()) {
+      throw new InvalidWalletError('amount do débito deve ser positivo');
+    }
+
+    if (this._balance.isLessThan(amount)) {
+      throw new InvalidWalletError('saldo insuficiente para débito');
+    }
+
+    const next = this._balance.subtract(amount);
+    if (next.equals(this._balance)) {
+      return;
+    }
+
+    this._balance = next;
+    this._version += 1;
+    this._updatedAt = new Date();
+  }
+
+  /**
    * Factory de criação controlada da carteira.
    * `version` inicia em 1; saldo inicial não pode ser negativo.
    */

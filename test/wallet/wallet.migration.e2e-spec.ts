@@ -100,6 +100,7 @@ describe('wallet migrations (e2e ida e volta)', () => {
       'CreateWagerTransactionTable1761690001000',
       'CreateWalletLedgerEntryTable1761690002000',
       'CreateOutboxMessageTable1761690003000',
+      'AddFailureCodeToWagerTransaction1761690004000',
     ]);
     expect(await tableExists('wallet')).toBe(true);
     expect(await tableExists('wager_transaction')).toBe(true);

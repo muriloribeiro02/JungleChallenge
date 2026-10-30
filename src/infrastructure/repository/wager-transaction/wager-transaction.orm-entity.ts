@@ -1,0 +1,97 @@
+import { Column, Entity, PrimaryColumn } from 'typeorm';
+
+const numericStringTransformer = {
+  to: (value: string): string => value,
+  from: (value: string | null): string => {
+    if (value === null || value === undefined) {
+      return '0.00';
+    }
+    return String(value);
+  },
+};
+
+@Entity({ name: 'wager_transaction' })
+export class WagerTransactionOrmEntity {
+  @PrimaryColumn({ type: 'uuid' })
+  id!: string;
+
+  @Column({ name: 'wallet_id', type: 'uuid' })
+  walletId!: string;
+
+  @Column({ name: 'player_id', type: 'uuid', nullable: true })
+  playerId!: string | null;
+
+  @Column({ type: 'varchar', length: 32 })
+  kind!: string;
+
+  @Column({ type: 'varchar', length: 32 })
+  status!: string;
+
+  @Column({
+    type: 'numeric',
+    precision: 19,
+    scale: 4,
+    transformer: numericStringTransformer,
+  })
+  amount!: string;
+
+  @Column({ type: 'varchar', length: 3 })
+  currency!: string;
+
+  @Column({ name: 'provider_id', type: 'varchar', length: 255, nullable: true })
+  providerId!: string | null;
+
+  @Column({
+    name: 'external_transaction_id',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  externalTransactionId!: string | null;
+
+  @Column({
+    name: 'idempotency_key',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  idempotencyKey!: string | null;
+
+  @Column({
+    name: 'payload_hash',
+    type: 'varchar',
+    length: 128,
+    nullable: true,
+  })
+  payloadHash!: string | null;
+
+  @Column({ name: 'round_id', type: 'varchar', length: 255, nullable: true })
+  roundId!: string | null;
+
+  @Column({ name: 'game_id', type: 'varchar', length: 255, nullable: true })
+  gameId!: string | null;
+
+  @Column({
+    name: 'external_reference',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  externalReference!: string | null;
+
+  @Column({
+    name: 'resolved_internal_reference',
+    type: 'uuid',
+    nullable: true,
+  })
+  resolvedInternalReference!: string | null;
+
+  @Column({ name: 'failure_code', type: 'varchar', length: 64, nullable: true })
+  failureCode!: string | null;
+
+  @Column({ name: 'created_at', type: 'timestamptz' })
+  createdAt!: Date;
+
+  @Column({ name: 'updated_at', type: 'timestamptz' })
+  updatedAt!: Date;
+}

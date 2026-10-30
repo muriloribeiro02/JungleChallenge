@@ -24,11 +24,15 @@ Sempre documentar quando houver uma atualização em teste neste arquivo.
 bun run test:unit -- wallet.entity
 bun run test:unit -- wallet.mapper
 bun run test:unit -- get-wallet-balance
+bun run test:unit -- open-wallet.use-case
+bun run test:unit -- place-bet.use-case
 bun run test:unit -- wager-transaction
 bun run test:unit -- wallet-ledger-entry
 bun run test:unit -- outbox-message.migration
 bun run test:unit -- wallet.migration
 bun run test:e2e -- wallet.constraints
+bun run test:e2e -- open-wallet.use-case
+bun run test:e2e -- place-bet.use-case
 bun run test:e2e -- wager-transaction.constraints
 bun run test:e2e -- wallet-ledger-entry.constraints
 bun run test:e2e -- outbox-message.constraints
@@ -60,11 +64,12 @@ test/
     wallet.entity.spec.ts                # unit: criação/validação da entidade
     wallet.mapper.spec.ts                # unit: mapeamento domínio ↔ ORM
     get-wallet-balance.use-case.spec.ts  # unit: consulta de saldo (repo fake)
+    open-wallet.use-case.spec.ts         # unit: orquestração abertura
+    open-wallet.use-case.e2e-spec.ts     # e2e: atomicidade/rollback PG
     wallet.repository.e2e-spec.ts        # e2e: save/findById no Postgres
     wallet.constraints.e2e-spec.ts       # e2e: constraints da tabela wallet
     wallet.migration.spec.ts             # unit: SQL up/down da migration
     wallet.migration.e2e-spec.ts         # e2e: ida e volta 001–004
-  app.e2e-spec.ts
   jest-unit.json
   jest-e2e.json
 ```
@@ -77,6 +82,12 @@ test/
 | `wallet.entity.spec.ts` | unit | `Wallet.open` / `rehydrate`: version=1, saldo `Money`, rejeição de saldo negativo e ids inválidos |
 | `wallet.mapper.spec.ts` | unit | `WalletMapper` toPersistence/toDomain e round-trip sem `number` |
 | `get-wallet-balance.use-case.spec.ts` | unit | `GetWalletBalanceUseCase`: encontrada / inexistente (InMemoryWalletRepository) |
+| `open-wallet.use-case.spec.ts` | unit | `OpenWalletUseCase`: zero / positivo / negativo / duplicata / orquestração |
+| `open-wallet.use-case.e2e-spec.ts` | e2e | abertura no Postgres: persistência, duplicata, rollback real |
+| `place-bet.use-case.spec.ts` | unit | `PlaceBetUseCase`: aprovada, REJECTED, idempotência, conflito, amount |
+| `place-bet.use-case.e2e-spec.ts` | e2e | BET PG: sucesso, rejeição, concorrência (80/100 e 80+80/50), replay, conflito, rollback |
+
+> E2E: `maxWorkers: 1` em `jest-e2e.json` para evitar corrida na mesma base. Limpeza de ledger usa `SET LOCAL session_replication_role = 'replica'` (sem desabilitar trigger globalmente).
 | `wager-transaction.entity.spec.ts` | unit | `WagerTransaction.openingProcessed`: OPENING/PROCESSED, amount positivo Money |
 | `wallet-ledger-entry.entity.spec.ts` | unit | `credit`/`debit`/`rehydrate`: equação de saldo, moedas, `balanceAfter` negativo, freeze + Date defensivo |
 | `wager-transaction.migration.spec.ts` | unit | `up`/`down` da `CreateWagerTransactionTable` |

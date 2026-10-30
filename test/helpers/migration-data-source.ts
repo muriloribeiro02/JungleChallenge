@@ -3,6 +3,7 @@ import { CreateWalletTable1761690000000 } from '../../src/infrastructure/databas
 import { CreateWagerTransactionTable1761690001000 } from '../../src/infrastructure/database/migrations/002-Create_table_wager_transaction';
 import { CreateWalletLedgerEntryTable1761690002000 } from '../../src/infrastructure/database/migrations/003-Create_table_wallet_ledger_entry';
 import { CreateOutboxMessageTable1761690003000 } from '../../src/infrastructure/database/migrations/004-Create_table_outbox_message';
+import { AddFailureCodeToWagerTransaction1761690004000 } from '../../src/infrastructure/database/migrations/005-Add_failure_code_to_wager_transaction';
 import { databaseEnv } from '../../src/infrastructure/database/env';
 
 export const ALL_MIGRATIONS = [
@@ -10,6 +11,7 @@ export const ALL_MIGRATIONS = [
   CreateWagerTransactionTable1761690001000,
   CreateWalletLedgerEntryTable1761690002000,
   CreateOutboxMessageTable1761690003000,
+  AddFailureCodeToWagerTransaction1761690004000,
 ] as const;
 
 export function createMigrationDataSource(): DataSource {
