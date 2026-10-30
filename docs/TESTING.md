@@ -46,7 +46,7 @@ bun run test:e2e -- wallet.repository
 test/
   helpers/
     db.ts                      # Postgres + insertWallet/tx/ledger/outbox
-    migration-data-source.ts   # DataSource TypeORM com migrations 001–004
+    migration-data-source.ts   # DataSource TypeORM com migrations 001–006
   money/
     money.spec.ts              # unit: precisão e moeda em Money.from
   outbox/
@@ -55,6 +55,8 @@ test/
   wager-transaction/
     wager-transaction.entity.spec.ts      # unit: OPENING/PROCESSED
     wager-transaction.migration.spec.ts   # unit: SQL up/down wager_transaction
+    wager-transaction-result-snapshot.migration.spec.ts # unit: SQL up/down 006 snapshot
+    wager-transaction-result-snapshot.migration.e2e-spec.ts # e2e: 006 colunas, backfill, CHECKs
     wager-transaction.constraints.e2e-spec.ts # e2e: status, amount, idempotência, moeda
   wallet-ledger/
     wallet-ledger-entry.entity.spec.ts    # unit: CREDIT/DEBIT, saldos, imutabilidade
@@ -69,7 +71,7 @@ test/
     wallet.repository.e2e-spec.ts        # e2e: save/findById no Postgres
     wallet.constraints.e2e-spec.ts       # e2e: constraints da tabela wallet
     wallet.migration.spec.ts             # unit: SQL up/down da migration
-    wallet.migration.e2e-spec.ts         # e2e: ida e volta 001–004
+    wallet.migration.e2e-spec.ts         # e2e: ida e volta 001–006
   jest-unit.json
   jest-e2e.json
 ```
@@ -91,6 +93,8 @@ test/
 | `wager-transaction.entity.spec.ts` | unit | `WagerTransaction.openingProcessed`: OPENING/PROCESSED, amount positivo Money |
 | `wallet-ledger-entry.entity.spec.ts` | unit | `credit`/`debit`/`rehydrate`: equação de saldo, moedas, `balanceAfter` negativo, freeze + Date defensivo |
 | `wager-transaction.migration.spec.ts` | unit | `up`/`down` da `CreateWagerTransactionTable` |
+| `wager-transaction-result-snapshot.migration.spec.ts` | unit | `up`/`down` da 006: colunas nullable, backfill ledger, CHECKs |
+| `wager-transaction-result-snapshot.migration.e2e-spec.ts` | e2e | 006: ida/volta colunas; backfill `observed_balance`; version NULL; CHECKs |
 | `wallet-ledger-entry.migration.spec.ts` | unit | `up`/`down` da `CreateWalletLedgerEntryTable` |
 | `outbox-message.migration.spec.ts` | unit | `up`/`down` da `CreateOutboxMessageTable` |
 | `wager-transaction.constraints.e2e-spec.ts` | e2e | status oficiais (+ inválido), amount por kind, idempotência/id externo por provedor, moeda |
@@ -99,7 +103,13 @@ test/
 | `wallet.repository.e2e-spec.ts` | e2e | `TypeOrmWalletRepository.save` / `findById` com Postgres real |
 | `wallet.constraints.e2e-spec.ts` | e2e | CHECK, UNIQUE, PK, NOT NULL |
 | `wallet.migration.spec.ts` | unit | `up`/`down` da `CreateWalletTable` |
-| `wallet.migration.e2e-spec.ts` | e2e | revert em cascata 004→001; run recria 001–004 |
+| `wallet.migration.e2e-spec.ts` | e2e | revert em cascata 006→001; run recria 001–006 |
+
+```bash
+bun run test:unit -- wager-transaction-result-snapshot.migration
+bun run test:e2e -- wager-transaction-result-snapshot.migration
+```
+
 
 > DELETE em `outbox_message`: contrato não exige bloqueio; migration e testes não inventam essa regra.
 
