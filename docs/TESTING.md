@@ -14,6 +14,7 @@ Sempre documentar quando houver uma atualização em teste neste arquivo.
 | `test:unit` | `bun run test:unit` | Roda testes **unitários** em `test/**/*.spec.ts` |
 | `test:e2e` | `bun run test:e2e` | Roda testes **e2e** em `test/**/*.e2e-spec.ts` (pode usar Postgres) |
 | `test:all` | `bun run test:all` | Roda unitários e e2e em sequência |
+| `test:messaging` | `bun run test:messaging` | E2E mensageria: Postgres + LocalStack SQS (`messaging.sqs`) |
 | `test:watch` | `bun run test:watch` | Jest em modo watch (specs em `src/`) |
 | `test:cov` | `bun run test:cov` | Cobertura dos specs em `src/` |
 | `test:debug` | `bun run test:debug` | Jest com inspector Node para debug |
@@ -43,6 +44,7 @@ bun run test:e2e -- place-bet.use-case
 bun run test:e2e -- settle-win-loss
 bun run test:e2e -- refund-rollback
 bun run test:e2e -- reprocess-pending
+bun run test:messaging
 bun run test:e2e -- wager-transaction.constraints
 bun run test:e2e -- wallet-ledger-entry.constraints
 bun run test:e2e -- outbox-message.constraints
@@ -56,7 +58,12 @@ bun run test:e2e -- wallet.repository
 test/
   helpers/
     db.ts                      # Postgres + insertWallet/tx/ledger/outbox
-    migration-data-source.ts   # DataSource TypeORM com migrations 001–008
+    migration-data-source.ts   # DataSource TypeORM com migrations 001–010
+  messaging/
+    outbox-publisher.use-case.spec.ts     # unit: backoff / markPublished
+    inbox-consumer.use-case.spec.ts       # unit: inbox, duplicata, fail sem ACK + visibility=0
+    messaging.migration.spec.ts           # unit: SQL 009/010
+    messaging.sqs.e2e-spec.ts             # e2e: PG + LocalStack SQS (publish/claim/DLQ/inbox)
   money/
     money.spec.ts              # unit: precisão e moeda em Money.from
   outbox/
@@ -158,9 +165,28 @@ Toda feature nova precisa de:
 2. **E2E** (`*.e2e-spec.ts`) — comportamento integrado (API e/ou banco)
 3. **Doc** — atualizar este arquivo descrevendo o que mudou
 
+## Mensageria (Outbox / Inbox / SQS)
+
+Pré-requisito: `docker compose up -d postgres localstack` e `bun run migration:run`.
+
+| Arquivo | Tipo | Cobre |
+|---------|------|-------|
+| `messaging/outbox-publisher.use-case.spec.ts` | unit | backoff `next_attempt_at`, API do publisher |
+| `messaging/inbox-consumer.use-case.spec.ts` | unit | inbox nova, duplicata+ACK, falha sem ACK + `changeVisibility(0)` |
+| `messaging/messaging.migration.spec.ts` | unit | SQL up 009 (`locked_until`) e 010 (`inbox_message`) |
+| `messaging/messaging.sqs.e2e-spec.ts` | e2e | publish, retry publish, publishers concorrentes (SKIP LOCKED), inbox/dedupe pós-commit, falha pré-commit, VT/redelivery, recuperação de lease, DLQ (`maxReceiveCount=5`), 3 consumers, saldo/ledger |
+
+```bash
+bun run test:unit -- messaging
+bun run test:messaging
+```
+
+> SQS real via LocalStack (sem mock no e2e). Credenciais `test`/`test` só para endpoint local.
+
 ## Banco nos e2e
 
 - Postgres via Docker: `docker compose up -d postgres`
+- LocalStack SQS: `docker compose up -d localstack` (porta `4566`)
 - Porta do app: ver `DATABASE_PORT` no `.env` (ex.: `5434`)
 - Preferir `BEGIN`/`ROLLBACK` por teste para não sujar dados
 - Testes de migration alteram schema de verdade e devem restaurar o estado no `afterAll`

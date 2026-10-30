@@ -14,6 +14,7 @@ import { WalletAlreadyExistsError } from '../../src/domain/wallet/wallet.errors'
 import type { WalletRepository } from '../../src/domain/wallet/wallet.repository';
 import type { WalletLedgerEntry } from '../../src/domain/wallet-ledger/wallet-ledger-entry.entity';
 import type { WalletLedgerEntryRepository } from '../../src/domain/wallet-ledger/wallet-ledger-entry.repository';
+import { FakeInboxRepository } from '../helpers/fake-inbox';
 
 class InMemoryWalletRepository implements WalletRepository {
   readonly items = new Map<string, Wallet>();
@@ -120,6 +121,10 @@ class InMemoryWagerTransactionRepository
       );
   }
 
+  async findById(id: string): Promise<WagerTransaction | null> {
+    return this.items.find((t) => t.id === id) ?? null;
+  }
+
   async findByIdForUpdate(id: string): Promise<WagerTransaction | null> {
     return this.items.find((t) => t.id === id) ?? null;
   }
@@ -143,6 +148,18 @@ class InMemoryOutboxRepository implements OutboxMessageRepository {
   async findByAggregateId(aggregateId: string): Promise<OutboxMessage[]> {
     return this.items.filter((m) => m.aggregateId === aggregateId);
   }
+
+  async findById(): Promise<OutboxMessage | null> {
+    return null;
+  }
+
+  async claimUnpublished(): Promise<OutboxMessage[]> {
+    return [];
+  }
+
+  async markPublished(): Promise<void> {}
+
+  async markPublishFailed(): Promise<void> {}
 }
 
 class InMemoryUnitOfWork implements UnitOfWork {
@@ -150,6 +167,7 @@ class InMemoryUnitOfWork implements UnitOfWork {
   readonly wagerTransactions = new InMemoryWagerTransactionRepository();
   readonly ledgerEntries = new InMemoryLedgerRepository();
   readonly outboxMessages = new InMemoryOutboxRepository();
+  readonly inboxMessages = new FakeInboxRepository();
   failAfterWalletSave = false;
 
   async run<T>(
@@ -160,6 +178,7 @@ class InMemoryUnitOfWork implements UnitOfWork {
       txs: [...this.wagerTransactions.items],
       ledger: [...this.ledgerEntries.items],
       outbox: [...this.outboxMessages.items],
+      inbox: [...this.inboxMessages.items],
     };
 
     const repos: TransactionalRepositories = {
@@ -178,6 +197,7 @@ class InMemoryUnitOfWork implements UnitOfWork {
       wagerTransactions: this.wagerTransactions,
       ledgerEntries: this.ledgerEntries,
       outboxMessages: this.outboxMessages,
+      inboxMessages: this.inboxMessages,
     };
 
     try {
@@ -193,6 +213,8 @@ class InMemoryUnitOfWork implements UnitOfWork {
       this.ledgerEntries.items.push(...snapshot.ledger);
       this.outboxMessages.items.length = 0;
       this.outboxMessages.items.push(...snapshot.outbox);
+      this.inboxMessages.items.length = 0;
+      this.inboxMessages.items.push(...snapshot.inbox);
       throw error;
     }
   }

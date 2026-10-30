@@ -7,6 +7,8 @@ import { AddFailureCodeToWagerTransaction1761690004000 } from '../../src/infrast
 import { AddResultSnapshotToWagerTransaction1761690005000 } from '../../src/infrastructure/database/migrations/006-Add_result_snapshot_to_wager_transaction';
 import { RefundRollbackPendingAndUniqueReversal1761690006000 } from '../../src/infrastructure/database/migrations/007-Refund_rollback_pending_and_unique_reversal';
 import { IndexPendingReferenceLookup1761690007000 } from '../../src/infrastructure/database/migrations/008-Index_pending_reference_lookup';
+import { OutboxClaimLockedUntil1761690008000 } from '../../src/infrastructure/database/migrations/009-Outbox_claim_locked_until';
+import { CreateInboxMessageTable1761690009000 } from '../../src/infrastructure/database/migrations/010-Create_table_inbox_message';
 import { databaseEnv } from '../../src/infrastructure/database/env';
 
 export const ALL_MIGRATIONS = [
@@ -18,6 +20,8 @@ export const ALL_MIGRATIONS = [
   AddResultSnapshotToWagerTransaction1761690005000,
   RefundRollbackPendingAndUniqueReversal1761690006000,
   IndexPendingReferenceLookup1761690007000,
+  OutboxClaimLockedUntil1761690008000,
+  CreateInboxMessageTable1761690009000,
 ] as const;
 
 export function createMigrationDataSource(): DataSource {

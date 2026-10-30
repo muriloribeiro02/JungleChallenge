@@ -108,6 +108,14 @@ export class TypeOrmWagerTransactionRepository
     return rows.map((row) => WagerTransactionMapper.toDomain(row));
   }
 
+  async findById(id: string): Promise<WagerTransaction | null> {
+    const row = await this.transactions.findOne({ where: { id } });
+    if (!row) {
+      return null;
+    }
+    return WagerTransactionMapper.toDomain(row);
+  }
+
   async findByIdForUpdate(id: string): Promise<WagerTransaction | null> {
     const row = await this.transactions
       .createQueryBuilder('tx')

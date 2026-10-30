@@ -91,6 +91,34 @@ export class ReprocessPendingReferencesUseCase {
   }
 
   /**
+   * Reprocessa todas as pendências na mesma transação já aberta (Inbox/SQS).
+   * Falha técnica propaga e permite rollback do insert da Inbox.
+   */
+  async executeWithRepos(
+    repos: Repos,
+    input: ReprocessPendingReferencesInput,
+  ): Promise<ReprocessPendingReferencesOutput> {
+    this.assertInput(input);
+
+    const pendings =
+      await repos.wagerTransactions.findPendingByProviderAndExternalReference(
+        input.providerId,
+        input.externalReference,
+      );
+
+    const results: ReprocessPendingItemResult[] = [];
+    for (const pending of pendings) {
+      results.push(await this.processLockedPending(repos, pending.id));
+    }
+
+    return {
+      providerId: input.providerId,
+      externalReference: input.externalReference,
+      results,
+    };
+  }
+
+  /**
    * Reprocessa uma pendência por id (útil para concorrência / retry pontual).
    */
   async reprocessOne(pendingTransactionId: string): Promise<ReprocessPendingItemResult> {

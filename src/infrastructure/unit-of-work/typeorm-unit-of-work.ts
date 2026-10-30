@@ -3,6 +3,8 @@ import type {
   TransactionalRepositories,
   UnitOfWork,
 } from '../../application/unit-of-work/unit-of-work';
+import { TypeOrmInboxMessageRepository } from '../repository/inbox/typeorm-inbox-message.repository';
+import { InboxMessageOrmEntity } from '../repository/inbox/inbox-message.orm-entity';
 import { TypeOrmOutboxMessageRepository } from '../repository/outbox/typeorm-outbox-message.repository';
 import { OutboxMessageOrmEntity } from '../repository/outbox/outbox-message.orm-entity';
 import { TypeOrmWagerTransactionRepository } from '../repository/wager-transaction/typeorm-wager-transaction.repository';
@@ -40,6 +42,10 @@ export function createTransactionalRepositories(
     ),
     outboxMessages: new TypeOrmOutboxMessageRepository(
       manager.getRepository(OutboxMessageOrmEntity),
+      manager,
+    ),
+    inboxMessages: new TypeOrmInboxMessageRepository(
+      manager.getRepository(InboxMessageOrmEntity),
     ),
   };
 }

@@ -13,12 +13,21 @@ export class OutboxMessageMapper {
     row.attempts = message.attempts;
     row.nextAttemptAt = message.nextAttemptAt;
     row.publishedAt = message.publishedAt;
+    row.lockedUntil = message.lockedUntil;
     return row;
   }
 
   static toDomain(row: OutboxMessageOrmEntity): OutboxMessage {
-    return OutboxMessage.fromEnvelope(
-      row.payload as unknown as DomainEventEnvelope,
-    );
+    return OutboxMessage.rehydrate({
+      id: row.id,
+      aggregateId: row.aggregateId,
+      eventType: row.eventType,
+      payload: row.payload as unknown as DomainEventEnvelope,
+      occurredAt: row.occurredAt,
+      attempts: row.attempts,
+      nextAttemptAt: row.nextAttemptAt,
+      publishedAt: row.publishedAt,
+      lockedUntil: row.lockedUntil ?? null,
+    });
   }
 }

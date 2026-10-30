@@ -1,3 +1,4 @@
+import type { InboxMessageRepository } from '../../domain/inbox/inbox-message.repository';
 import type { OutboxMessageRepository } from '../../domain/outbox/outbox-message.repository';
 import type { WagerTransactionRepository } from '../../domain/wager-transaction/wager-transaction.repository';
 import type { WalletLedgerEntryRepository } from '../../domain/wallet-ledger/wallet-ledger-entry.repository';
@@ -8,6 +9,7 @@ export type TransactionalRepositories = {
   wagerTransactions: WagerTransactionRepository;
   ledgerEntries: WalletLedgerEntryRepository;
   outboxMessages: OutboxMessageRepository;
+  inboxMessages: InboxMessageRepository;
 };
 
 export interface UnitOfWork {

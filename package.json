@@ -19,6 +19,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:messaging": "jest --config ./test/jest-e2e.json messaging.sqs",
     "test:all": "bun run test:unit && bun run test:e2e",
     "migration:create": "ts-node -P tsconfig.typeorm.json ./src/infrastructure/database/migration-create.ts",
     "migration:run": "docker compose --profile migrate run --rm migrate run",
@@ -26,6 +27,7 @@
     "migration:show": "docker compose --profile migrate run --rm migrate show"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1160.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^12.0.1",
     "@nestjs/core": "^11.0.1",

@@ -25,6 +25,7 @@ import {
 import type { WagerTransactionRepository } from '../../src/domain/wager-transaction/wager-transaction.repository';
 import type { WalletLedgerEntry } from '../../src/domain/wallet-ledger/wallet-ledger-entry.entity';
 import type { WalletLedgerEntryRepository } from '../../src/domain/wallet-ledger/wallet-ledger-entry.repository';
+import { FakeInboxRepository } from '../helpers/fake-inbox';
 
 class FakeWallets implements WalletRepository {
   constructor(private current: Wallet | null) {}
@@ -112,6 +113,9 @@ class FakeTx implements WagerTransactionRepository {
           a.id.localeCompare(b.id),
       );
   }
+  async findById(id: string): Promise<WagerTransaction | null> {
+    return this.items.find((t) => t.id === id) ?? null;
+  }
   async findByIdForUpdate(id: string): Promise<WagerTransaction | null> {
     return this.items.find((t) => t.id === id) ?? null;
   }
@@ -135,6 +139,14 @@ class FakeOutbox implements OutboxMessageRepository {
   async findByAggregateId(aggregateId: string): Promise<OutboxMessage[]> {
     return this.items.filter((m) => m.aggregateId === aggregateId);
   }
+  async findById(): Promise<OutboxMessage | null> {
+    return null;
+  }
+  async claimUnpublished(): Promise<OutboxMessage[]> {
+    return [];
+  }
+  async markPublished(): Promise<void> {}
+  async markPublishFailed(): Promise<void> {}
 }
 
 class FakeUow implements UnitOfWork {
@@ -181,6 +193,7 @@ describe('PlaceBetUseCase', () => {
       wagerTransactions: txs,
       ledgerEntries: ledger,
       outboxMessages: outbox,
+      inboxMessages: new FakeInboxRepository(),
     });
     return {
       wallet,

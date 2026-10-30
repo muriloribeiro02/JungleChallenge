@@ -23,6 +23,7 @@ export interface WagerTransactionRepository {
     providerId: string,
     externalReference: string,
   ): Promise<WagerTransaction[]>;
+  findById(id: string): Promise<WagerTransaction | null>;
   /** SELECT FOR UPDATE da linha wager_transaction. */
   findByIdForUpdate(id: string): Promise<WagerTransaction | null>;
 }
