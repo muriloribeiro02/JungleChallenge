@@ -20,7 +20,7 @@ export type MoneyEventPayload = {
 export type WagerTransactionProcessedData = {
   transactionId: string;
   walletId: string;
-  kind: 'OPENING' | 'BET';
+  kind: 'OPENING' | 'BET' | 'WIN' | 'LOSS';
   status: 'PROCESSED';
   amount: string;
   currency: string;

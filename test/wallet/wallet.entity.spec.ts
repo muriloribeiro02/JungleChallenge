@@ -114,6 +114,43 @@ describe('Wallet (Aggregate Root)', () => {
     });
   });
 
+  describe('credit', () => {
+    it('credita valor positivo e incrementa version', () => {
+      const wallet = Wallet.open({
+        id,
+        playerId,
+        initialBalance: Money.from({ amount: '100.00', currency: 'BRL' }),
+      });
+
+      wallet.credit(Money.from({ amount: '25.00', currency: 'BRL' }));
+
+      expect(wallet.balance.toString()).toBe('125.00');
+      expect(wallet.version).toBe(2);
+    });
+
+    it('rejeita amount não positivo', () => {
+      const wallet = Wallet.open({
+        id,
+        playerId,
+        initialBalance: Money.from({ amount: '10.00', currency: 'BRL' }),
+      });
+
+      expect(() => wallet.credit(Money.zero('BRL'))).toThrow(InvalidWalletError);
+    });
+
+    it('rejeita moeda diferente', () => {
+      const wallet = Wallet.open({
+        id,
+        playerId,
+        initialBalance: Money.from({ amount: '10.00', currency: 'BRL' }),
+      });
+
+      expect(() =>
+        wallet.credit(Money.from({ amount: '1.00', currency: 'USD' })),
+      ).toThrow();
+    });
+  });
+
   describe('rehydrate', () => {
     it('reconstrói o estado persistido sem alterar version', () => {
       const createdAt = new Date('2026-01-01T00:00:00.000Z');

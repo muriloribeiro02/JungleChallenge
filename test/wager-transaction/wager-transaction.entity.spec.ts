@@ -232,6 +232,62 @@ describe('WagerTransaction', () => {
     });
   });
 
+  describe('winProcessed / lossProcessed', () => {
+    const externalBase = {
+      id,
+      walletId,
+      playerId: randomUUID(),
+      providerId: 'provider-a',
+      externalTransactionId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      payloadHash: 'hash-settle',
+      roundId: 'round-1',
+      gameId: 'game-1',
+    };
+
+    it('winProcessed exige amount positivo e snapshot', () => {
+      const amount = Money.from({ amount: '25.00', currency: 'BRL' });
+      const snapshot = {
+        observedBalance: Money.from({ amount: '125.00', currency: 'BRL' }),
+        observedWalletVersion: 2,
+      };
+
+      const tx = WagerTransaction.winProcessed({
+        ...externalBase,
+        amount,
+        snapshot,
+      });
+
+      expect(tx.kind).toBe('WIN');
+      expect(tx.status).toBe(WAGER_TRANSACTION_STATUS_PROCESSED);
+      expect(tx.observedBalance?.toString()).toBe('125.00');
+    });
+
+    it('lossProcessed exige amount zero', () => {
+      const snapshot = validSnapshot();
+      const tx = WagerTransaction.lossProcessed({
+        ...externalBase,
+        amount: Money.zero('BRL'),
+        snapshot: {
+          observedBalance: Money.from({ amount: '100.00', currency: 'BRL' }),
+          observedWalletVersion: 1,
+        },
+      });
+
+      expect(tx.kind).toBe('LOSS');
+      expect(tx.amount.isZero()).toBe(true);
+      expect(tx.observedWalletVersion).toBe(1);
+
+      expect(() =>
+        WagerTransaction.lossProcessed({
+          ...externalBase,
+          amount: Money.from({ amount: '1.00', currency: 'BRL' }),
+          snapshot,
+        }),
+      ).toThrow(InvalidWagerTransactionError);
+    });
+  });
+
   describe('rehydrate', () => {
     it('reconstrói estado persistido legado sem snapshot (NULL)', () => {
       const tx = WagerTransaction.rehydrate({

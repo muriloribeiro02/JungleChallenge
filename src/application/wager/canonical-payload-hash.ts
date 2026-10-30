@@ -1,15 +1,20 @@
 import { createHash } from 'node:crypto';
 
 /**
- * Campos de negócio incluídos no hash (sem headers/transporte como idempotencyKey).
+ * Campos de negócio do payload canônico (decisão da implementação).
  *
- * Pendência: não há no repositório (README/COMOPENSEI) a lista oficial fechada dos
- * campos do payload canônico. Mantemos o conjunto alinhado às regras de BET já
- * confirmadas na implementação (metadados externos + valor/moeda/kind), excluindo
- * idempotencyKey e demais metadados de transporte. Revisar quando o contrato
- * oficial de hashing estiver disponível no projeto.
+ * O contrato oficial exige JSON canônico com chaves ordenadas e exclusão de
+ * Idempotency-Key / metadados de transporte, mas **não** fecha a lista de campos.
+ *
+ * Decisão desta implementação (documentada, não prescrita pelo contrato):
+ * providerId, externalTransactionId, playerId, walletId, roundId, gameId,
+ * kind, amount, currency.
+ *
+ * BET mantém o shape flat histórico (amount + currency) para não alterar
+ * silenciosamente hashes já persistidos. WIN/LOSS usam o mesmo conjunto de
+ * campos e o mesmo algoritmo, apenas com kind distinto.
  */
-export type BetBusinessPayload = {
+export type ExternalWagerBusinessPayload = {
   providerId: string;
   playerId: string;
   walletId: string;
@@ -18,13 +23,39 @@ export type BetBusinessPayload = {
   roundId: string;
   gameId: string;
   externalTransactionId: string;
+  kind: 'BET' | 'WIN' | 'LOSS';
+};
+
+export type BetBusinessPayload = ExternalWagerBusinessPayload & {
   kind: 'BET';
 };
 
+export type WinBusinessPayload = ExternalWagerBusinessPayload & {
+  kind: 'WIN';
+};
+
+export type LossBusinessPayload = ExternalWagerBusinessPayload & {
+  kind: 'LOSS';
+};
+
 /** JSON canônico com chaves ordenadas + SHA-256 hex. */
-export function computeBetPayloadHash(payload: BetBusinessPayload): string {
+export function computeExternalWagerPayloadHash(
+  payload: ExternalWagerBusinessPayload,
+): string {
   const canonical = canonicalJsonStringify(payload);
   return createHash('sha256').update(canonical, 'utf8').digest('hex');
+}
+
+export function computeBetPayloadHash(payload: BetBusinessPayload): string {
+  return computeExternalWagerPayloadHash(payload);
+}
+
+export function computeWinPayloadHash(payload: WinBusinessPayload): string {
+  return computeExternalWagerPayloadHash(payload);
+}
+
+export function computeLossPayloadHash(payload: LossBusinessPayload): string {
+  return computeExternalWagerPayloadHash(payload);
 }
 
 export function canonicalJsonStringify(value: unknown): string {

@@ -3,7 +3,9 @@ import {
   WAGER_TRANSACTION_STATUS_PROCESSED,
   WAGER_TRANSACTION_STATUS_REJECTED,
   WAGER_TRANSACTION_TYPE_BET,
+  WAGER_TRANSACTION_TYPE_LOSS,
   WAGER_TRANSACTION_TYPE_OPENING,
+  WAGER_TRANSACTION_TYPE_WIN,
   WagerTransaction,
   type WagerFailureCode,
   type WagerTransactionKind,
@@ -45,7 +47,9 @@ export class WagerTransactionMapper {
 
     if (
       kind !== WAGER_TRANSACTION_TYPE_OPENING &&
-      kind !== WAGER_TRANSACTION_TYPE_BET
+      kind !== WAGER_TRANSACTION_TYPE_BET &&
+      kind !== WAGER_TRANSACTION_TYPE_WIN &&
+      kind !== WAGER_TRANSACTION_TYPE_LOSS
     ) {
       throw new Error(
         `WagerTransactionMapper.toDomain: kind não suportado (${row.kind})`,

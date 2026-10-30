@@ -19,7 +19,12 @@ export function buildWagerTransactionProcessedEvent(input: {
   const occurredAt = (input.occurredAt ?? new Date()).toISOString();
   const kind = input.transaction.kind;
 
-  if (kind !== 'OPENING' && kind !== 'BET') {
+  if (
+    kind !== 'OPENING' &&
+    kind !== 'BET' &&
+    kind !== 'WIN' &&
+    kind !== 'LOSS'
+  ) {
     throw new Error(`kind não suportado em Processed: ${kind}`);
   }
 

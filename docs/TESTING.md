@@ -26,6 +26,8 @@ bun run test:unit -- wallet.mapper
 bun run test:unit -- get-wallet-balance
 bun run test:unit -- open-wallet.use-case
 bun run test:unit -- place-bet.use-case
+bun run test:unit -- settle-win
+bun run test:unit -- settle-loss
 bun run test:unit -- wager-transaction
 bun run test:unit -- wallet-ledger-entry
 bun run test:unit -- outbox-message.migration
@@ -33,6 +35,7 @@ bun run test:unit -- wallet.migration
 bun run test:e2e -- wallet.constraints
 bun run test:e2e -- open-wallet.use-case
 bun run test:e2e -- place-bet.use-case
+bun run test:e2e -- settle-win-loss
 bun run test:e2e -- wager-transaction.constraints
 bun run test:e2e -- wallet-ledger-entry.constraints
 bun run test:e2e -- outbox-message.constraints
@@ -59,6 +62,11 @@ test/
     wager-transaction-result-snapshot.migration.spec.ts # unit: SQL up/down 006 snapshot
     wager-transaction-result-snapshot.migration.e2e-spec.ts # e2e: 006 colunas, backfill, CHECKs
     wager-transaction.constraints.e2e-spec.ts # e2e: status, amount, idempotência, moeda
+  wager/
+    place-bet.use-case.spec.ts / .e2e-spec.ts
+    settle-win.use-case.spec.ts
+    settle-loss.use-case.spec.ts
+    settle-win-loss.use-case.e2e-spec.ts  # e2e: WIN/LOSS PG
   wallet-ledger/
     wallet-ledger-entry.entity.spec.ts    # unit: CREDIT/DEBIT, saldos, imutabilidade
     wallet-ledger-entry.migration.spec.ts # unit: SQL up/down ledger
@@ -82,7 +90,10 @@ test/
 | Arquivo | Tipo | Cobre |
 |---------|------|-------|
 | `money/money.spec.ts` | unit | `Money.from`: escala ≤2 casas, rejeição de `number`, moedas inválidas/normalização |
-| `wallet.entity.spec.ts` | unit | `Wallet.open` / `rehydrate`: version=1, saldo `Money`, rejeição de saldo negativo e ids inválidos |
+| `wallet.entity.spec.ts` | unit | `open` / `rehydrate` / `credit` / `debit`: version, moeda, saldo |
+| `settle-win.use-case.spec.ts` | unit | WIN: crédito, ledger, eventos, idempotência, conflitos |
+| `settle-loss.use-case.spec.ts` | unit | LOSS: amount 0, sem ledger, 1 evento, idempotência |
+| `settle-win-loss.use-case.e2e-spec.ts` | e2e | WIN/LOSS PG: snapshot, race WIN×BET, rollback, external id |
 | `wallet.mapper.spec.ts` | unit | `WalletMapper` toPersistence/toDomain e round-trip sem `number` |
 | `get-wallet-balance.use-case.spec.ts` | unit | `GetWalletBalanceUseCase`: encontrada / inexistente (InMemoryWalletRepository) |
 | `open-wallet.use-case.spec.ts` | unit | `OpenWalletUseCase`: zero / positivo / negativo / duplicata / orquestração |
@@ -91,7 +102,7 @@ test/
 | `place-bet.use-case.e2e-spec.ts` | e2e | BET PG: snapshot, replay sem outbox, legado sem snapshot, concorrência, rollback |
 
 > E2E: `maxWorkers: 1` em `jest-e2e.json` para evitar corrida na mesma base. Limpeza de ledger usa `SET LOCAL session_replication_role = 'replica'` (sem desabilitar trigger globalmente).
-| `wager-transaction.entity.spec.ts` | unit | OPENING/BET + snapshot; currency mismatch; legado NULL; parcial |
+| `wager-transaction.entity.spec.ts` | unit | OPENING/BET/WIN/LOSS + snapshot; currency; legado NULL |
 | `wager-transaction.mapper.spec.ts` | unit | snapshot round-trip escala 2; legado NULL sem inventar |
 | `wallet-ledger-entry.entity.spec.ts` | unit | `credit`/`debit`/`rehydrate`: equação de saldo, moedas, `balanceAfter` negativo, freeze + Date defensivo |
 | `wager-transaction.migration.spec.ts` | unit | `up`/`down` da `CreateWagerTransactionTable` |

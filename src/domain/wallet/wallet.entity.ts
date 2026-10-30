@@ -76,6 +76,30 @@ export class Wallet {
   }
 
   /**
+   * Credita valor na carteira. Incrementa `version` somente se o saldo mudar.
+   */
+  credit(amount: Money): void {
+    if (!(amount instanceof Money)) {
+      throw new InvalidWalletError('amount deve ser uma instância de Money');
+    }
+
+    this.assertSameCurrency(amount);
+
+    if (!amount.isPositive()) {
+      throw new InvalidWalletError('amount do crédito deve ser positivo');
+    }
+
+    const next = this._balance.add(amount);
+    if (next.equals(this._balance)) {
+      return;
+    }
+
+    this._balance = next;
+    this._version += 1;
+    this._updatedAt = new Date();
+  }
+
+  /**
    * Factory de criação controlada da carteira.
    * `version` inicia em 1; saldo inicial não pode ser negativo.
    */

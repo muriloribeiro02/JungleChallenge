@@ -6,6 +6,8 @@ export type { OperationResultSnapshot } from './operation-result-snapshot';
 
 export const WAGER_TRANSACTION_TYPE_OPENING = 'OPENING' as const;
 export const WAGER_TRANSACTION_TYPE_BET = 'BET' as const;
+export const WAGER_TRANSACTION_TYPE_WIN = 'WIN' as const;
+export const WAGER_TRANSACTION_TYPE_LOSS = 'LOSS' as const;
 
 export const WAGER_TRANSACTION_STATUS_PROCESSED = 'PROCESSED' as const;
 export const WAGER_TRANSACTION_STATUS_REJECTED = 'REJECTED' as const;
@@ -14,7 +16,9 @@ export const FAILURE_CODE_INSUFFICIENT_FUNDS = 'INSUFFICIENT_FUNDS' as const;
 
 export type WagerTransactionKind =
   | typeof WAGER_TRANSACTION_TYPE_OPENING
-  | typeof WAGER_TRANSACTION_TYPE_BET;
+  | typeof WAGER_TRANSACTION_TYPE_BET
+  | typeof WAGER_TRANSACTION_TYPE_WIN
+  | typeof WAGER_TRANSACTION_TYPE_LOSS;
 
 /** @deprecated use WagerTransactionKind — mantido para compatibilidade OPENING */
 export type WagerTransactionType = WagerTransactionKind;
@@ -32,6 +36,7 @@ export type OpeningProcessedProps = {
   snapshot: OperationResultSnapshot;
 };
 
+/** Props comuns de operação externa (BET / WIN / LOSS). */
 export type ExternalBetProps = {
   id: string;
   walletId: string;
@@ -45,6 +50,8 @@ export type ExternalBetProps = {
   gameId: string;
   snapshot: OperationResultSnapshot;
 };
+
+export type ExternalWagerProps = ExternalBetProps;
 
 export type WagerTransactionState = {
   id: string;
@@ -205,6 +212,66 @@ export class WagerTransaction {
     );
   }
 
+  static winProcessed(props: ExternalWagerProps): WagerTransaction {
+    WagerTransaction.assertExternalBetProps(props);
+    WagerTransaction.assertPositiveMoney(props.amount, 'WIN');
+    const snapshot = WagerTransaction.assertSnapshot(
+      props.snapshot,
+      props.amount,
+    );
+
+    const now = new Date();
+    return new WagerTransaction(
+      props.id,
+      props.walletId,
+      props.playerId,
+      WAGER_TRANSACTION_TYPE_WIN,
+      WAGER_TRANSACTION_STATUS_PROCESSED,
+      props.amount,
+      props.providerId,
+      props.externalTransactionId,
+      props.idempotencyKey,
+      props.payloadHash,
+      props.roundId,
+      props.gameId,
+      null,
+      snapshot.observedBalance,
+      snapshot.observedWalletVersion,
+      now,
+      now,
+    );
+  }
+
+  static lossProcessed(props: ExternalWagerProps): WagerTransaction {
+    WagerTransaction.assertExternalBetProps(props);
+    WagerTransaction.assertZeroMoney(props.amount, 'LOSS');
+    const snapshot = WagerTransaction.assertSnapshot(
+      props.snapshot,
+      props.amount,
+    );
+
+    const now = new Date();
+    return new WagerTransaction(
+      props.id,
+      props.walletId,
+      props.playerId,
+      WAGER_TRANSACTION_TYPE_LOSS,
+      WAGER_TRANSACTION_STATUS_PROCESSED,
+      props.amount,
+      props.providerId,
+      props.externalTransactionId,
+      props.idempotencyKey,
+      props.payloadHash,
+      props.roundId,
+      props.gameId,
+      null,
+      snapshot.observedBalance,
+      snapshot.observedWalletVersion,
+      now,
+      now,
+    );
+  }
+
   static rehydrate(state: WagerTransactionState): WagerTransaction {
     const amount = Money.from(state.amount);
     const snapshot = WagerTransaction.rehydrateSnapshot(state, amount);
@@ -327,6 +394,19 @@ export class WagerTransaction {
     if (!amount.isPositive()) {
       throw new InvalidWagerTransactionError(
         `amount da ${kind} deve ser positivo`,
+      );
+    }
+  }
+
+  private static assertZeroMoney(amount: Money, kind: string): void {
+    if (!(amount instanceof Money)) {
+      throw new InvalidWagerTransactionError(
+        'amount deve ser uma instância de Money',
+      );
+    }
+    if (!amount.isZero()) {
+      throw new InvalidWagerTransactionError(
+        `amount da ${kind} deve ser zero`,
       );
     }
   }
