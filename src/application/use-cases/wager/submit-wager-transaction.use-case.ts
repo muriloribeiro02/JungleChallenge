@@ -247,13 +247,67 @@ export class SubmitWagerTransactionUseCase {
       }
       if (error instanceof ReferenceAlreadyReversedConflictError) {
         this.metrics.recordLockConflict('reference_reversed');
-        throw error;
+        const output = await this.recoverRejectedAfterReversalRace(input);
+        this.recordMetrics(input.kind, output, started);
+        return output;
       }
       if (error instanceof ExternalTransactionIdConflictError) {
         throw error;
       }
       throw error;
     }
+  }
+
+  /**
+   * Após UNIQUE de reversão: a UoW original já fez rollback.
+   * Delega a `recoverAfterReferenceAlreadyReversed` (nova UoW + REJECTED).
+   */
+  private async recoverRejectedAfterReversalRace(
+    input: SubmitWagerTransactionInput,
+  ): Promise<SubmitWagerTransactionOutput> {
+    if (
+      (input.kind !== 'REFUND' && input.kind !== 'ROLLBACK') ||
+      !input.referenceExternalTransactionId
+    ) {
+      throw new ReferenceAlreadyReversedConflictError();
+    }
+
+    const reversalInput = {
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: input.money.amount,
+      currency: input.money.currency,
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      idempotencyKey: input.idempotencyKey,
+      referenceExternalTransactionId: input.referenceExternalTransactionId,
+    };
+
+    const result =
+      input.kind === 'REFUND'
+        ? await this.refundWager.recoverAfterReferenceAlreadyReversed(
+            reversalInput,
+          )
+        : await this.rollbackWager.recoverAfterReferenceAlreadyReversed(
+            reversalInput,
+          );
+
+    return {
+      transactionId: result.transactionId,
+      status: result.status,
+      balance:
+        result.observedBalance !== undefined
+          ? {
+              amount: result.observedBalance,
+              currency: result.currency,
+            }
+          : null,
+      failureCode: result.failureCode,
+      // Persistência nova após race (replay de key já REJECTED passa por executeWithRepos).
+      idempotentReplay: false,
+    };
   }
 
   private assertInput(input: SubmitWagerTransactionInput): void {

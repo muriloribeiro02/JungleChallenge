@@ -161,18 +161,54 @@ export class RefundWagerUseCase {
         );
       }
       if (error instanceof ReferenceAlreadyReversedConflictError) {
-        return this.unitOfWork.run((repos) =>
-          this.persistRejectedAfterRace(
-            repos,
-            input,
-            amount,
-            payloadHash,
-            FAILURE_CODE_REFERENCE_ALREADY_REVERSED,
-          ),
-        );
+        return this.recoverAfterReferenceAlreadyReversed(input);
       }
       throw error;
     }
+  }
+
+  /**
+   * Segunda UoW após rollback da TX abortada pelo UNIQUE de reversão.
+   * Reutilizada por `execute` e por `SubmitWagerTransactionUseCase`.
+   */
+  async recoverAfterReferenceAlreadyReversed(
+    input: RefundWagerInput,
+  ): Promise<RefundWagerOutput> {
+    this.assertInput(input);
+
+    const amount = Money.from({
+      amount: input.amount,
+      currency: input.currency,
+    });
+    if (!amount.isPositive()) {
+      throw new InvalidRefundWagerInputError(
+        'amount do REFUND deve ser positivo',
+      );
+    }
+
+    const businessPayload: RefundBusinessPayload = {
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: amount.toString(),
+      currency: amount.currency,
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      kind: 'REFUND',
+      referenceExternalTransactionId: input.referenceExternalTransactionId,
+    };
+    const payloadHash = computeRefundPayloadHash(businessPayload);
+
+    return this.unitOfWork.run((repos) =>
+      this.persistRejectedAfterRace(
+        repos,
+        input,
+        amount,
+        payloadHash,
+        FAILURE_CODE_REFERENCE_ALREADY_REVERSED,
+      ),
+    );
   }
 
   private async processRefund(

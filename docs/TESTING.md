@@ -94,7 +94,7 @@ test/
     metrics-instrumentation.spec.ts       # unit: Submit/Inbox/Outbox → métricas
     metrics.e2e-spec.ts                   # e2e: GET /metrics, BET, replay, reconcile
   api/
-    http.api.e2e-spec.ts                  # e2e: REST §9; 404; 202 PENDING_REFERENCE; magnitude 400
+    http.api.e2e-spec.ts                  # e2e: REST §9; 404; 202; race HTTP REFUND×ROLLBACK 200+REJECTED; magnitude 400
     http-exception.filter.spec.ts         # unit: mapHttpError 404/409/400/500
     money.dto.spec.ts                     # unit: MoneyDto escala + magnitude shared
     health.controller.spec.ts             # unit: live/ready via DependencyHealthPort
@@ -113,7 +113,7 @@ test/
   wallet/
     reconcile-wallet.use-case.spec.ts     # unit: reconciliação saldo×ledger
   wager/
-    submit-wager-transaction.use-case.spec.ts # unit: fachada HTTP→use cases
+    submit-wager-transaction.use-case.spec.ts # unit: fachada; race → recover REJECTED; outros erros propagam
   money/
     money.spec.ts              # unit: precisão e moeda em Money.from
   outbox/
@@ -175,7 +175,7 @@ test/
 | `infrastructure/typeorm-sqs-dependency-health.spec.ts` | unit | adapter: `checkAvailable` (não `receive`); PG/SQS fail |
 | `infrastructure/sqs-message-bus.check-available.spec.ts` | unit | `GetQueueAttributes` QueueArn; rejeita sem ARN / SDK error |
 | `api/health.e2e-spec.ts` | e2e | ready 200/503; spy sem `receive`; NotVisible estável após probes; live stopping |
-| `api/http.api.e2e-spec.ts` | e2e | REST §9; 202 PENDING_REFERENCE; 404; 409; magnitude 400 |
+| `api/http.api.e2e-spec.ts` | e2e | REST §9; 202; race REFUND×ROLLBACK HTTP 200+REJECTED; saldo/ledger/reconciliação; 404; 409; magnitude 400 |
 | `money/money.spec.ts` | unit | `from`/`fromPersisted`; magnitude em add/subtract/negate (MAX±); moeda; negativos internos |
 | `money/align-monetary-scale.migration.spec.ts` | unit | SQL up/down `AlignMonetaryNumericScaleNineteenTwo` + abort se dados com >2 casas |
 | `wallet.entity.spec.ts` | unit | `open` / `rehydrate` / `credit` / `debit`: version, moeda, saldo |

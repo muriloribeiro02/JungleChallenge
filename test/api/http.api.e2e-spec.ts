@@ -481,4 +481,220 @@ describe('HTTP API (e2e)', () => {
       .get(`/providers/provider-http/wagering/transactions/${ext}`)
       .expect(200);
   });
+
+  it('HTTP: REFUND × ROLLBACK concorrentes — um PROCESSED, um REJECTED, ambos 200', async () => {
+    const playerId = randomUUID();
+    const wallet = await request(app.getHttpServer())
+      .post('/wallets')
+      .send({
+        playerId,
+        initialBalance: { amount: '100.00', currency: 'BRL' },
+      })
+      .expect(201);
+    createdWalletIds.push(wallet.body.id);
+
+    const betExt = randomUUID();
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', `provider-http:${betExt}`)
+      .send({
+        providerId: 'provider-http',
+        externalTransactionId: betExt,
+        playerId,
+        walletId: wallet.body.id,
+        roundId: 'r-race',
+        gameId: 'g-race',
+        kind: 'BET',
+        money: { amount: '40.00', currency: 'BRL' },
+      })
+      .expect(200);
+
+    const refundExt = randomUUID();
+    const rollbackExt = randomUUID();
+    const [refundRes, rollbackRes] = await Promise.all([
+      request(app.getHttpServer())
+        .post('/wagering/transactions')
+        .set('Idempotency-Key', `provider-http:${refundExt}`)
+        .send({
+          providerId: 'provider-http',
+          externalTransactionId: refundExt,
+          playerId,
+          walletId: wallet.body.id,
+          roundId: 'r-race',
+          gameId: 'g-race',
+          kind: 'REFUND',
+          money: { amount: '40.00', currency: 'BRL' },
+          referenceExternalTransactionId: betExt,
+        }),
+      request(app.getHttpServer())
+        .post('/wagering/transactions')
+        .set('Idempotency-Key', `provider-http:${rollbackExt}`)
+        .send({
+          providerId: 'provider-http',
+          externalTransactionId: rollbackExt,
+          playerId,
+          walletId: wallet.body.id,
+          roundId: 'r-race',
+          gameId: 'g-race',
+          kind: 'ROLLBACK',
+          money: { amount: '40.00', currency: 'BRL' },
+          referenceExternalTransactionId: betExt,
+        }),
+    ]);
+
+    expect(refundRes.status).toBe(200);
+    expect(rollbackRes.status).toBe(200);
+
+    const statuses = [refundRes.body.status, rollbackRes.body.status].sort();
+    expect(statuses).toEqual(['PROCESSED', 'REJECTED']);
+
+    const rejected =
+      refundRes.body.status === 'REJECTED' ? refundRes.body : rollbackRes.body;
+    const processed =
+      refundRes.body.status === 'PROCESSED' ? refundRes.body : rollbackRes.body;
+    expect(rejected.failureCode).toBe('REFERENCE_ALREADY_REVERSED');
+    expect(processed.failureCode).toBeUndefined();
+
+    const bal = await dataSource.query(
+      `SELECT balance::text AS b FROM wallet WHERE id = $1`,
+      [wallet.body.id],
+    );
+    expect(String(bal[0].b)).toContain('100');
+
+    const credits = await dataSource.query(
+      `
+        SELECT COUNT(*)::int AS c
+        FROM wallet_ledger_entry e
+        JOIN wager_transaction t ON t.id = e.transaction_id
+        WHERE t.external_reference = $1
+          AND t.kind IN ('REFUND', 'ROLLBACK')
+          AND t.status = 'PROCESSED'
+          AND e.direction = 'CREDIT'
+      `,
+      [betExt],
+    );
+    expect(credits[0].c).toBe(1);
+
+    const loserKey =
+      rejected.transactionId === refundRes.body.transactionId
+        ? `provider-http:${refundExt}`
+        : `provider-http:${rollbackExt}`;
+    const loserBody =
+      rejected.transactionId === refundRes.body.transactionId
+        ? {
+            providerId: 'provider-http',
+            externalTransactionId: refundExt,
+            playerId,
+            walletId: wallet.body.id,
+            roundId: 'r-race',
+            gameId: 'g-race',
+            kind: 'REFUND',
+            money: { amount: '40.00', currency: 'BRL' },
+            referenceExternalTransactionId: betExt,
+          }
+        : {
+            providerId: 'provider-http',
+            externalTransactionId: rollbackExt,
+            playerId,
+            walletId: wallet.body.id,
+            roundId: 'r-race',
+            gameId: 'g-race',
+            kind: 'ROLLBACK',
+            money: { amount: '40.00', currency: 'BRL' },
+            referenceExternalTransactionId: betExt,
+          };
+
+    const replay = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', loserKey)
+      .send(loserBody)
+      .expect(200);
+    expect(replay.body.idempotentReplay).toBe(true);
+    expect(replay.body.transactionId).toBe(rejected.transactionId);
+    expect(replay.body.status).toBe('REJECTED');
+    expect(replay.body.failureCode).toBe('REFERENCE_ALREADY_REVERSED');
+
+    const recon = await request(app.getHttpServer())
+      .post(`/wallets/${wallet.body.id}/reconciliation`)
+      .expect(200);
+    expect(recon.body.consistent).toBe(true);
+  });
+
+  it('HTTP: ROLLBACK × REFUND concorrentes (ordem inversa) — um PROCESSED, um REJECTED', async () => {
+    const playerId = randomUUID();
+    const wallet = await request(app.getHttpServer())
+      .post('/wallets')
+      .send({
+        playerId,
+        initialBalance: { amount: '80.00', currency: 'BRL' },
+      })
+      .expect(201);
+    createdWalletIds.push(wallet.body.id);
+
+    const betExt = randomUUID();
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', `provider-http:${betExt}`)
+      .send({
+        providerId: 'provider-http',
+        externalTransactionId: betExt,
+        playerId,
+        walletId: wallet.body.id,
+        roundId: 'r-race-2',
+        gameId: 'g-race-2',
+        kind: 'BET',
+        money: { amount: '25.00', currency: 'BRL' },
+      })
+      .expect(200);
+
+    const refundExt = randomUUID();
+    const rollbackExt = randomUUID();
+    // Dispara ROLLBACK primeiro no Promise.all (ainda concorrente).
+    const [rollbackRes, refundRes] = await Promise.all([
+      request(app.getHttpServer())
+        .post('/wagering/transactions')
+        .set('Idempotency-Key', `provider-http:${rollbackExt}`)
+        .send({
+          providerId: 'provider-http',
+          externalTransactionId: rollbackExt,
+          playerId,
+          walletId: wallet.body.id,
+          roundId: 'r-race-2',
+          gameId: 'g-race-2',
+          kind: 'ROLLBACK',
+          money: { amount: '25.00', currency: 'BRL' },
+          referenceExternalTransactionId: betExt,
+        }),
+      request(app.getHttpServer())
+        .post('/wagering/transactions')
+        .set('Idempotency-Key', `provider-http:${refundExt}`)
+        .send({
+          providerId: 'provider-http',
+          externalTransactionId: refundExt,
+          playerId,
+          walletId: wallet.body.id,
+          roundId: 'r-race-2',
+          gameId: 'g-race-2',
+          kind: 'REFUND',
+          money: { amount: '25.00', currency: 'BRL' },
+          referenceExternalTransactionId: betExt,
+        }),
+    ]);
+
+    expect([rollbackRes.status, refundRes.status]).toEqual([200, 200]);
+    expect(
+      [rollbackRes.body.status, refundRes.body.status].sort(),
+    ).toEqual(['PROCESSED', 'REJECTED']);
+
+    const bal = await dataSource.query(
+      `SELECT balance::text AS b FROM wallet WHERE id = $1`,
+      [wallet.body.id],
+    );
+    expect(String(bal[0].b)).toContain('80');
+
+    const recon = await request(app.getHttpServer())
+      .post(`/wallets/${wallet.body.id}/reconciliation`)
+      .expect(200);
+    expect(recon.body.consistent).toBe(true);
+  });
 });

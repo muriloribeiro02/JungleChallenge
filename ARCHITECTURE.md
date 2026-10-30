@@ -407,7 +407,7 @@ Fonte: `src/domain/wager-transaction/failure-codes.ts`.
 - Submit HTTP: rejeição de negócio (pré-check) → **200** + body com `status: REJECTED` e `failureCode` (não 4xx de negócio).
 - `PENDING_REFERENCE` → **202**; `REFERENCE_NOT_FOUND` só após TTL (não no aceite pendente).
 - Conflitos de idempotência/id externo → **409** (erros de aplicação, não `failureCode` de negócio).
-- Race UNIQUE de reversão já existente: ver §18 — o caminho HTTP via Submit **não** tem a mesma semântica que `RefundWagerUseCase.execute` / `persistRejectedAfterRace`.
+- Race UNIQUE de reversão: ver §18 — Submit e Refund/Rollback.execute recuperam com `REJECTED` + HTTP **200**.
 
 ---
 
@@ -506,7 +506,8 @@ Mapeamento HTTP (contrato exige distinção clara, não códigos fixos):
 
 - **400** — validação / payload / `Idempotency-Key` ausente  
 - **404** — wallet ou transação inexistente (inclui wallet ausente em `POST /wagering/transactions`)  
-- **409** — wallet duplicada; idempotência key + payload diferente; unique id externo; race UNIQUE de reversão no Submit (ver §18)  
+- **409** — wallet duplicada; idempotência key + payload diferente; unique id externo  
+
 - **200** — `PROCESSED` ou `REJECTED` (negócio no body)  
 - **202** — `PENDING_REFERENCE`  
 - **503** — readiness (deps / stopping)  
@@ -585,18 +586,16 @@ Contrato §7.4: sem reverter duas vezes pelo **mesmo tipo**.
 
 ### Race UNIQUE × caminhos de execução
 
-Pré-check que encontra reversão `PROCESSED` → persiste `REJECTED` + `REFERENCE_ALREADY_REVERSED` → HTTP **200** (via Submit).
+Pré-check que encontra reversão `PROCESSED` → persiste `REJECTED` + `REFERENCE_ALREADY_REVERSED` → HTTP **200**.
 
 Se duas reversões correm em paralelo e a constraint UNIQUE dispara:
 
-| Caminho | Comportamento atual |
-|---------|---------------------|
-| HTTP / `SubmitWagerTransactionUseCase.execute` | Propaga `ReferenceAlreadyReversedConflictError` → HTTP **409**; **não** persiste `REJECTED` nesse catch |
-| `RefundWagerUseCase.execute` (direto) | `persistRejectedAfterRace` → `REJECTED` + `REFERENCE_ALREADY_REVERSED` |
-| `RollbackWagerUseCase.execute` (direto) | Mesmo padrão de race handling que o Refund (persistência de rejeição após race) |
-| Reprocess pending | Trata a race e pode persistir rejeição (`rejectAfterUniqueRace`) |
+1. A UoW original **aborta** (PostgreSQL / TypeORM rollback) — sem efeito financeiro do perdedor.
+2. Segunda UoW via `recoverAfterReferenceAlreadyReversed` → `persistRejectedAfterRace` → `REJECTED` + `REFERENCE_ALREADY_REVERSED`.
+3. HTTP / `SubmitWagerTransactionUseCase.execute` e `Refund`/`Rollback.execute` compartilham essa recuperação → **200** com body de negócio.
+4. Reprocess pending: `rejectAfterUniqueRace` (mesmo failure code).
 
-**Os caminhos não têm semântica HTTP idêntica.** Diferença registrada como limitação conhecida (§19) até decisão técnica posterior.
+Replay da idempotency key do perdedor devolve o `REJECTED` persistido (`idempotentReplay: true`).
 
 ---
 
@@ -608,7 +607,6 @@ Se duas reversões correm em paralelo e a constraint UNIQUE dispara:
 - Auth IdP **não** implementada (apenas extensão).
 - Status `FAILED` / `PENDING` no CHECK **sem** ciclo de vida no domínio.
 - Intervenção Outbox é operacional via CLI, **sem** endpoint HTTP admin.
-- Race UNIQUE REFUND/ROLLBACK: Submit HTTP pode responder **409** sem `REJECTED`; use case direto de Refund/Rollback pode persistir `REJECTED` — semânticas distintas (§18).
 - `/health/ready` usa `checkAvailable` / `GetQueueAttributes` (sem consumo); inbound FIFO fora do probe (§15).
 
 ---

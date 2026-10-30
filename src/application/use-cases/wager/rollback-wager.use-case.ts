@@ -163,18 +163,54 @@ export class RollbackWagerUseCase {
         );
       }
       if (error instanceof ReferenceAlreadyReversedConflictError) {
-        return this.unitOfWork.run((repos) =>
-          this.persistRejectedAfterRace(
-            repos,
-            input,
-            amount,
-            payloadHash,
-            FAILURE_CODE_REFERENCE_ALREADY_REVERSED,
-          ),
-        );
+        return this.recoverAfterReferenceAlreadyReversed(input);
       }
       throw error;
     }
+  }
+
+  /**
+   * Segunda UoW após rollback da TX abortada pelo UNIQUE de reversão.
+   * Reutilizada por `execute` e por `SubmitWagerTransactionUseCase`.
+   */
+  async recoverAfterReferenceAlreadyReversed(
+    input: RollbackWagerInput,
+  ): Promise<RollbackWagerOutput> {
+    this.assertInput(input);
+
+    const amount = Money.from({
+      amount: input.amount,
+      currency: input.currency,
+    });
+    if (!amount.isPositive()) {
+      throw new InvalidRollbackWagerInputError(
+        'amount do ROLLBACK deve ser positivo',
+      );
+    }
+
+    const businessPayload: RollbackBusinessPayload = {
+      providerId: input.providerId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      amount: amount.toString(),
+      currency: amount.currency,
+      roundId: input.roundId,
+      gameId: input.gameId,
+      externalTransactionId: input.externalTransactionId,
+      kind: 'ROLLBACK',
+      referenceExternalTransactionId: input.referenceExternalTransactionId,
+    };
+    const payloadHash = computeRollbackPayloadHash(businessPayload);
+
+    return this.unitOfWork.run((repos) =>
+      this.persistRejectedAfterRace(
+        repos,
+        input,
+        amount,
+        payloadHash,
+        FAILURE_CODE_REFERENCE_ALREADY_REVERSED,
+      ),
+    );
   }
 
   private async processRollback(
